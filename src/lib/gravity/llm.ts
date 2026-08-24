@@ -16,9 +16,16 @@ export interface LLMOpts {
   json?: boolean;
   maxTokens?: number;
   temperature?: number;
+  /** Per-provider attempt timeout. Keep under serverless limits so the
+   *  provider chain can actually fail over inside the function window. */
+  timeoutMs?: number;
 }
 
 type ProviderName = "gemini" | "groq" | "ollama";
+
+export function isLLMConfigured(): boolean {
+  return Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
+}
 
 function providerChain(): ProviderName[] {
   const primary = (process.env.LLM_PROVIDER ?? "gemini") as ProviderName;
@@ -28,89 +35,151 @@ function providerChain(): ProviderName[] {
   return [...new Set(all)].filter((p) => {
     if (p === "gemini") return Boolean(process.env.GEMINI_API_KEY);
     if (p === "groq") return Boolean(process.env.GROQ_API_KEY);
-    if (p === "ollama") return Boolean(process.env.OLLAMA_URL || true);
+    if (p === "ollama") return true; // local default URL
     return false;
   });
 }
+
+/** Retryable status codes: rate limits and transient server errors. */
+function retryable(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function callGemini(opts: LLMOpts): Promise<LLMResult> {
   const key = process.env.GEMINI_API_KEY!;
   const model =
     process.env.GEMINI_MODEL ??
     (opts.tier === "small" ? "gemini-2.5-flash-lite" : "gemini-2.5-flash");
-  const started = Date.now();
 
-  const res = await fetch(`${GEMINI_URL}/${model}:generateContent?key=${key}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      ...(opts.system ? { system_instruction: { parts: [{ text: opts.system }] } } : {}),
-      contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
-      generationConfig: {
-        temperature: opts.temperature ?? 0.4,
-        maxOutputTokens: opts.maxTokens ?? 768,
-        thinkingConfig: { thinkingBudget: 0 },
-        ...(opts.json ? { responseMimeType: "application/json" } : {}),
-      },
-    }),
-    signal: AbortSignal.timeout(90_000),
+  const body = JSON.stringify({
+    ...(opts.system ? { system_instruction: { parts: [{ text: opts.system }] } } : {}),
+    contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
+    generationConfig: {
+      temperature: opts.temperature ?? 0.4,
+      maxOutputTokens: opts.maxTokens ?? 768,
+      thinkingConfig: { thinkingBudget: 0 },
+      ...(opts.json ? { responseMimeType: "application/json" } : {}),
+    },
   });
 
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  let result: LLMResult | null = null;
+  let lastErr: unknown;
 
-  const data = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
-    usageMetadata?: { candidatesTokenCount?: number; totalTokenCount?: number };
-  };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const started = Date.now();
+    try {
+      const res = await fetch(`${GEMINI_URL}/${model}:generateContent?key=${key}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
+      });
 
-  const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-  return {
-    text: text.trim(),
-    tokens: data.usageMetadata?.candidatesTokenCount ?? 0,
-    latencyMs: Date.now() - started,
-    model,
-    provider: "gemini",
-  };
+      if (!res.ok) {
+        const err = new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
+        if (retryable(res.status) && attempt === 0) {
+          lastErr = err;
+          await sleep(1200);
+          continue;
+        }
+        throw err;
+      }
+
+      const data = (await res.json()) as {
+        candidates?: { content?: { parts?: { text?: string }[] } }[];
+        usageMetadata?: { candidatesTokenCount?: number; totalTokenCount?: number };
+      };
+
+      const text =
+        data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+      result = {
+        text: text.trim(),
+        tokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+        latencyMs: Date.now() - started,
+        model,
+        provider: "gemini",
+      };
+      break;
+    } catch (err) {
+      lastErr = err;
+      // Network/timeout errors: one silent retry.
+      if (attempt === 0) {
+        await sleep(1200);
+        continue;
+      }
+    }
+  }
+
+  if (!result) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  return result;
 }
 
 async function callGroq(opts: LLMOpts): Promise<LLMResult> {
   const model = process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile";
-  const started = Date.now();
-
-  const res = await fetch(GROQ_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.GROQ_API_KEY!}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        ...(opts.system ? [{ role: "system", content: opts.system }] : []),
-        { role: "user", content: opts.prompt },
-      ],
-      temperature: opts.temperature ?? 0.4,
-      max_tokens: Math.max(opts.maxTokens ?? 512, 768),
-      reasoning_effort: "low",
-      ...(opts.json ? { response_format: { type: "json_object" } } : {}),
-    }),
-    signal: AbortSignal.timeout(90_000),
+  const body = JSON.stringify({
+    model,
+    messages: [
+      ...(opts.system ? [{ role: "system", content: opts.system }] : []),
+      { role: "user", content: opts.prompt },
+    ],
+    temperature: opts.temperature ?? 0.4,
+    max_tokens: Math.max(opts.maxTokens ?? 512, 768),
+    reasoning_effort: "low",
+    ...(opts.json ? { response_format: { type: "json_object" } } : {}),
   });
 
-  if (!res.ok) throw new Error(`Groq ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  let result: LLMResult | null = null;
+  let lastErr: unknown;
 
-  const data = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-    usage?: { completion_tokens?: number };
-  };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const started = Date.now();
+    try {
+      const res = await fetch(GROQ_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.GROQ_API_KEY!}`,
+        },
+        body,
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
+      });
 
-  return {
-    text: data.choices?.[0]?.message?.content?.trim() ?? "",
-    tokens: data.usage?.completion_tokens ?? 0,
-    latencyMs: Date.now() - started,
-    model,
-    provider: "groq",
-  };
+      if (!res.ok) {
+        const err = new Error(`Groq ${res.status}: ${(await res.text()).slice(0, 300)}`);
+        if (retryable(res.status) && attempt === 0) {
+          lastErr = err;
+          await sleep(1200);
+          continue;
+        }
+        throw err;
+      }
+
+      const data = (await res.json()) as {
+        choices?: { message?: { content?: string } }[];
+        usage?: { completion_tokens?: number };
+      };
+
+      result = {
+        text: data.choices?.[0]?.message?.content?.trim() ?? "",
+        tokens: data.usage?.completion_tokens ?? 0,
+        latencyMs: Date.now() - started,
+        model,
+        provider: "groq",
+      };
+      break;
+    } catch (err) {
+      lastErr = err;
+      if (attempt === 0) {
+        await sleep(1200);
+        continue;
+      }
+    }
+  }
+
+  if (!result) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  return result;
 }
 
 async function callOllama(opts: LLMOpts): Promise<LLMResult> {
@@ -131,7 +200,7 @@ async function callOllama(opts: LLMOpts): Promise<LLMResult> {
       format: opts.json ? "json" : undefined,
       options: { temperature: opts.temperature ?? 0.4, num_predict: opts.maxTokens ?? 512 },
     }),
-    signal: AbortSignal.timeout(180_000),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
   });
 
   if (!res.ok) throw new Error(`Ollama ${res.status}: ${(await res.text()).slice(0, 300)}`);
