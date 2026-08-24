@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { eq, desc } from "drizzle-orm";
-import { getDb, isDbConfigured } from "@/lib/db";
+import { eq, desc, and } from "drizzle-orm";
+import { getDb } from "@/lib/db";
 import {
   missions,
   problemProfiles,
@@ -10,18 +10,28 @@ import {
   evaluations,
   decisionLedger,
 } from "@/lib/drizzle/schema";
+import { requireTenant } from "@/lib/api-auth";
+
+export const dynamic = "force-dynamic";
+
+async function loadOwnedMission(tenantId: string, id: string) {
+  const [mission] = await getDb()
+    .select()
+    .from(missions)
+    .where(and(eq(missions.id, id), eq(missions.tenantId, tenantId)));
+  return mission ?? null;
+}
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!isDbConfigured) {
-    return NextResponse.json({ error: "Database not configured", live: false }, { status: 503 });
-  }
+  const guard = await requireTenant();
+  if (guard.error) return guard.error;
   const { id } = await params;
   const db = getDb();
 
-  const [mission] = await db.select().from(missions).where(eq(missions.id, id));
+  const mission = await loadOwnedMission(guard.ctx.tenantId, id);
   if (!mission) return NextResponse.json({ error: "Mission not found" }, { status: 404 });
 
   const [profile] = await db.select().from(problemProfiles).where(eq(problemProfiles.missionId, id));
@@ -55,11 +65,14 @@ export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!isDbConfigured) {
-    return NextResponse.json({ error: "Database not configured", live: false }, { status: 503 });
-  }
+  const guard = await requireTenant();
+  if (guard.error) return guard.error;
   const { id } = await params;
   const db = getDb();
+
+  const mission = await loadOwnedMission(guard.ctx.tenantId, id);
+  if (!mission) return NextResponse.json({ error: "Mission not found" }, { status: 404 });
+
   await db.delete(evaluations).where(eq(evaluations.missionId, id));
   await db.delete(decisionLedger).where(eq(decisionLedger.missionId, id));
   const runs = await db.select().from(executionRuns).where(eq(executionRuns.missionId, id));

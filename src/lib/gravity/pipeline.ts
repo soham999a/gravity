@@ -519,13 +519,23 @@ export async function executeMission(missionId: string): Promise<void> {
   }
 }
 
-export async function createMissionWithPlan(prompt: string) {
+export async function createMissionWithPlan(
+  prompt: string,
+  ctx?: { tenantId?: string; userId?: string },
+) {
   const db = getDb();
   const profile = profileProblem(prompt);
 
   const [mission] = await db
     .insert(missions)
-    .values({ prompt, status: "routing", dataType: profile.dataType, domain: profile.domain })
+    .values({
+      prompt,
+      status: "routing",
+      dataType: profile.dataType,
+      domain: profile.domain,
+      tenantId: ctx?.tenantId ?? null,
+      userId: ctx?.userId ?? null,
+    })
     .returning();
 
   await db.insert(problemProfiles).values({

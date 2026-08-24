@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
-export async function createServerSupabase() {
+export async function createClient() {
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -12,16 +12,17 @@ export async function createServerSupabase() {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
+        setAll(cookiesToSet) {
           try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options as Parameters<typeof cookieStore.set>[2])
-            );
+            for (const { name, value, options } of cookiesToSet) {
+              cookieStore.set(name, value, options);
+            }
           } catch {
-            // Server Component — ignore
+            // Called from a Server Component — safe to ignore when
+            // middleware is refreshing sessions.
           }
         },
       },
-    }
+    },
   );
 }

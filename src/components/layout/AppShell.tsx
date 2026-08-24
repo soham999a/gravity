@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
 import {
   LayoutDashboard,
   Zap,
@@ -61,7 +62,19 @@ const sections = ["Platform", "Intelligence", "Registry", "Observability", "Admi
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [mobileOpen, setMobileOpen] = React.useState(false);
+  const [userEmail, setUserEmail] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    createClient().auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null));
+  }, []);
+
+  const signOut = async () => {
+    await createClient().auth.signOut();
+    router.replace("/login");
+    router.refresh();
+  };
 
   return (
     <div className="min-h-screen flex">
@@ -108,6 +121,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         {/* Footer */}
         <div className="border-t border-border px-5 py-3">
+          {userEmail && (
+            <div className="mb-2 pb-2 border-b border-border">
+              <div className="font-mono text-[8px] tracking-[0.12em] uppercase text-gold mb-0.5">
+                Signed in
+              </div>
+              <div className="text-[11px] text-ivory-dim truncate" title={userEmail}>
+                {userEmail}
+              </div>
+              <button
+                onClick={signOut}
+                className="mt-1 font-mono text-[8px] tracking-[0.12em] uppercase text-ivory-faint hover:text-danger-text transition-colors"
+              >
+                Sign out →
+              </button>
+            </div>
+          )}
           <div className="flex items-center gap-2 mb-1">
             <span className="inline-flex items-center px-2 py-0.5 border border-gold/30 font-mono text-[7px] tracking-[0.1em] uppercase text-gold bg-gold-pale">
               Demo Mode

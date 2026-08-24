@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
-import { eq } from "drizzle-orm";
-import { getDb, isDbConfigured } from "@/lib/db";
+import { eq, and } from "drizzle-orm";
+import { getDb } from "@/lib/db";
 import { missions } from "@/lib/drizzle/schema";
 import { executeMission } from "@/lib/gravity/pipeline";
+import { requireTenant } from "@/lib/api-auth";
 
 // Mission pipelines chain multiple LLM calls (profiling, planning,
 // specialist agents, critique). Keep the function alive until the
@@ -15,13 +16,15 @@ export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!isDbConfigured) {
-    return NextResponse.json({ error: "Database not configured", live: false }, { status: 503 });
-  }
+  const guard = await requireTenant();
+  if (guard.error) return guard.error;
   const { id } = await params;
   const db = getDb();
 
-  const [mission] = await db.select().from(missions).where(eq(missions.id, id));
+  const [mission] = await db
+    .select()
+    .from(missions)
+    .where(and(eq(missions.id, id), eq(missions.tenantId, guard.ctx.tenantId)));
   if (!mission) return NextResponse.json({ error: "Mission not found" }, { status: 404 });
 
   // Respond immediately; waitUntil keeps the serverless instance alive

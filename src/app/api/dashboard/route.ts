@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { desc, eq } from "drizzle-orm";
-import { getDb, isDbConfigured } from "@/lib/db";
+import { desc, eq, inArray } from "drizzle-orm";
+import { getDb } from "@/lib/db";
 import {
   evaluations,
   missions,
@@ -10,18 +10,39 @@ import {
   executionNodes,
   decisionLedger,
 } from "@/lib/drizzle/schema";
+import { requireTenant } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  if (!isDbConfigured) return NextResponse.json({ live: false });
+  const guard = await requireTenant();
+  if (guard.error) return guard.error;
   try {
     const db = getDb();
 
-    const [missionRows, evalRows, ledgerRows] = await Promise.all([
-      db.select().from(missions).orderBy(desc(missions.createdAt)).limit(200),
-      db.select().from(evaluations).orderBy(desc(evaluations.missionId)).limit(200),
-      db.select().from(decisionLedger).orderBy(desc(decisionLedger.timestamp)).limit(200),
+    const missionRows = await db
+      .select()
+      .from(missions)
+      .where(eq(missions.tenantId, guard.ctx.tenantId))
+      .orderBy(desc(missions.createdAt))
+      .limit(200);
+    const missionIds = missionRows.map((m) => m.id);
+
+    const [evalRows, ledgerRows] = await Promise.all([
+      missionIds.length
+        ? db
+            .select()
+            .from(evaluations)
+            .where(inArray(evaluations.missionId, missionIds))
+            .orderBy(desc(evaluations.missionId))
+            .limit(200)
+        : Promise.resolve([]),
+      db
+        .select()
+        .from(decisionLedger)
+        .where(eq(decisionLedger.tenantId, guard.ctx.tenantId))
+        .orderBy(desc(decisionLedger.timestamp))
+        .limit(200),
     ]);
 
     const completed = missionRows.filter((m) => m.status === "completed");
@@ -64,7 +85,14 @@ export async function GET() {
       }),
     );
 
-    const runs = await db.select().from(executionRuns).orderBy(desc(executionRuns.startedAt)).limit(5);
+    const runs = missionIds.length
+      ? await db
+          .select()
+          .from(executionRuns)
+          .where(inArray(executionRuns.missionId, missionIds))
+          .orderBy(desc(executionRuns.startedAt))
+          .limit(5)
+      : [];
     const nodeRows = runs.length
       ? await db.select().from(executionNodes).limit(500)
       : [];

@@ -1,14 +1,20 @@
 import { NextResponse } from "next/server";
-import { desc } from "drizzle-orm";
-import { getDb, isDbConfigured } from "@/lib/db";
+import { desc, eq } from "drizzle-orm";
+import { getDb } from "@/lib/db";
 import { agents } from "@/lib/drizzle/schema";
+import { requireTenant } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  if (!isDbConfigured) return NextResponse.json({ items: [], live: false });
+  const guard = await requireTenant();
+  if (guard.error) return guard.error;
   try {
-    const rows = await getDb().select().from(agents).orderBy(desc(agents.escalationLevel));
+    const rows = await getDb()
+      .select()
+      .from(agents)
+      .where(eq(agents.tenantId, guard.ctx.tenantId))
+      .orderBy(desc(agents.escalationLevel));
     return NextResponse.json({
       live: true,
       items: rows.map((a) => ({

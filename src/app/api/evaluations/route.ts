@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
-import { getDb, isDbConfigured } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { evaluations, missions } from "@/lib/drizzle/schema";
+import { requireTenant } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  if (!isDbConfigured) return NextResponse.json({ items: [], live: false });
+  const guard = await requireTenant();
+  if (guard.error) return guard.error;
   try {
     const rows = await getDb()
       .select({
@@ -20,7 +22,8 @@ export async function GET() {
         feedback: evaluations.feedback,
       })
       .from(evaluations)
-      .leftJoin(missions, eq(evaluations.missionId, missions.id))
+      .innerJoin(missions, eq(evaluations.missionId, missions.id))
+      .where(eq(missions.tenantId, guard.ctx.tenantId))
       .orderBy(desc(missions.createdAt))
       .limit(50);
     return NextResponse.json({ live: true, items: rows });

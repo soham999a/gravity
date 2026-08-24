@@ -1,16 +1,19 @@
 import { NextResponse } from "next/server";
-import { getDb, isDbConfigured } from "@/lib/db";
+import { eq } from "drizzle-orm";
+import { getDb } from "@/lib/db";
 import { tools, workflows } from "@/lib/drizzle/schema";
+import { requireTenant } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  if (!isDbConfigured) return NextResponse.json({ items: [], live: false });
+  const guard = await requireTenant();
+  if (guard.error) return guard.error;
   try {
     const db = getDb();
     const [toolRows, workflowRows] = await Promise.all([
-      db.select().from(tools),
-      db.select().from(workflows),
+      db.select().from(tools).where(eq(tools.tenantId, guard.ctx.tenantId)),
+      db.select().from(workflows).where(eq(workflows.tenantId, guard.ctx.tenantId)),
     ]);
     return NextResponse.json({
       live: true,
