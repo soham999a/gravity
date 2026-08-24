@@ -1,9 +1,10 @@
 "use client";
 
+import * as React from "react";
 import { SectionBlock, Panel, Badge } from "@/components/gravity/primitives";
 import { Button } from "@/components/ui/button";
 import { Badge as UIBadge } from "@/components/ui/badge";
-import { Plus, ExternalLink } from "lucide-react";
+import { Plus, ExternalLink, Loader2 } from "lucide-react";
 
 const MISSIONS = [
   { id: "MS-001", prompt: "Demand forecasting — next 30 days", domain: "Retail", dataType: "time_series", strategy: "statistical", escalation: 1, llmCalls: 0, tokens: 0, cost: "$0.00", latency: "3.2s", confidence: 93, status: "completed" },
@@ -16,7 +17,57 @@ const MISSIONS = [
   { id: "MS-008", prompt: "Answer product FAQ from knowledge base", domain: "Support", dataType: "text", strategy: "small_llm", escalation: 2, llmCalls: 1, tokens: 800, cost: "$0.001", latency: "1.5s", confidence: 92, status: "completed" },
 ];
 
+interface LiveMissionRow {
+  id: string;
+  prompt: string;
+  domain: string | null;
+  dataType: string | null;
+  selectedStrategy: string | null;
+  totalTokens: number | null;
+  totalLatencyMs: number | null;
+  confidence: number | null;
+  status: string;
+}
+
 export default function MissionsPage() {
+  const [liveMissions, setLiveMissions] = React.useState<LiveMissionRow[] | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/missions", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as { missions: LiveMissionRow[] };
+        if (!cancelled) setLiveMissions(data.missions);
+      } catch {
+        // stay on mock data
+      }
+    };
+    load();
+    const t = setInterval(load, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  const isLive = liveMissions !== null;
+  const rows = isLive
+    ? liveMissions!.map((m) => ({
+        id: m.id.slice(0, 8).toUpperCase(),
+        prompt: m.prompt,
+        domain: m.domain ?? "—",
+        dataType: m.dataType ?? "—",
+        strategy: (m.selectedStrategy ?? "pending") as string,
+        tokens: m.totalTokens ?? 0,
+        cost: "$0.00",
+        latency: m.totalLatencyMs ? `${(m.totalLatencyMs / 1000).toFixed(1)}s` : "—",
+        confidence: m.confidence != null ? Math.round(m.confidence * 100) : null,
+        status: m.status,
+      }))
+    : MISSIONS.map((m) => ({ ...m }));
+
   return (
     <div className="p-8 lg:p-20">
       <div className="max-w-[1200px] mx-auto">
@@ -35,28 +86,69 @@ export default function MissionsPage() {
         <div className="grid-4 mb-10">
           <div>
             <div className="kicker mb-1">Total Missions</div>
-            <div className="font-serif text-3xl font-light text-gold">{MISSIONS.length}</div>
+            <div className="font-serif text-3xl font-light text-gold">{rows.length}</div>
           </div>
-          <div>
-            <div className="kicker mb-1">Avg Cost</div>
-            <div className="font-serif text-3xl font-light text-gold">$0.006</div>
-          </div>
-          <div>
-            <div className="kicker mb-1">Avg Latency</div>
-            <div className="font-serif text-3xl font-light text-gold">11.5s</div>
-          </div>
-          <div>
-            <div className="kicker mb-1">LLM Avoidance</div>
-            <div className="font-serif text-3xl font-light text-gold">37%</div>
-          </div>
+          {isLive ? (
+            <>
+              <div>
+                <div className="kicker mb-1">Total Tokens</div>
+                <div className="font-serif text-3xl font-light text-gold">
+                  {rows.reduce((s, r) => s + (("tokens" in r ? r.tokens : 0) as number), 0).toLocaleString()}
+                </div>
+              </div>
+              <div>
+                <div className="kicker mb-1">Avg Latency</div>
+                <div className="font-serif text-3xl font-light text-gold">
+                  {(() => {
+                    const lat = liveMissions!.filter((m) => m.totalLatencyMs);
+                    return lat.length
+                      ? `${(lat.reduce((s, m) => s + (m.totalLatencyMs ?? 0), 0) / lat.length / 1000).toFixed(1)}s`
+                      : "—";
+                  })()}
+                </div>
+              </div>
+              <div>
+                <div className="kicker mb-1">LLM Avoidance</div>
+                <div className="font-serif text-3xl font-light text-gold">
+                  {liveMissions!.length
+                    ? `${Math.round((liveMissions!.filter((m) => !m.totalTokens).length / liveMissions!.length) * 100)}%`
+                    : "—"}
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <div className="kicker mb-1">Avg Cost</div>
+                <div className="font-serif text-3xl font-light text-gold">$0.006</div>
+              </div>
+              <div>
+                <div className="kicker mb-1">Avg Latency</div>
+                <div className="font-serif text-3xl font-light text-gold">11.5s</div>
+              </div>
+              <div>
+                <div className="kicker mb-1">LLM Avoidance</div>
+                <div className="font-serif text-3xl font-light text-gold">37%</div>
+              </div>
+            </>
+          )}
         </div>
+
+        {!isLive && (
+          <div className="flex items-center gap-2.5 mb-5 px-4 py-3 border border-border bg-deep">
+            <Loader2 size={12} className="animate-spin text-gold" />
+            <span className="kicker mb-0">
+              Demo registry — connect the database to see live missions here.
+            </span>
+          </div>
+        )}
 
         {/* Table */}
         <div className="border border-border overflow-x-auto">
           <table className="w-full border-collapse bg-deep">
             <thead>
               <tr>
-                {["ID", "Task", "Domain", "Data Type", "Strategy", "LLM Calls", "Cost", "Latency", "Confidence", "Status"].map((h) => (
+                {["ID", "Task", "Domain", "Data Type", "Strategy", isLive ? "Tokens" : "LLM Calls", "Cost", "Latency", "Confidence", "Status"].map((h) => (
                   <th key={h} className="font-mono text-[8px] tracking-[0.18em] uppercase text-gold px-4 py-3 border-b border-border text-left bg-surface">
                     {h}
                   </th>
@@ -64,20 +156,37 @@ export default function MissionsPage() {
               </tr>
             </thead>
             <tbody>
-              {MISSIONS.map((m) => (
-                <tr key={m.id} className="hover:bg-surface transition-colors">
-                  <td className="px-4 py-3 border-b border-border text-ivory font-mono text-xs">{m.id}</td>
-                  <td className="px-4 py-3 border-b border-border text-ivory font-light text-xs max-w-[280px] truncate">{m.prompt}</td>
-                  <td className="px-4 py-3 border-b border-border text-ivory-dim text-xs">{m.domain}</td>
-                  <td className="px-4 py-3 border-b border-border text-ivory-dim text-xs">{m.dataType}</td>
-                  <td className="px-4 py-3 border-b border-border"><Badge strategy={m.strategy} variant="strategy">{m.strategy}</Badge></td>
-                  <td className="px-4 py-3 border-b border-border font-mono text-xs text-center" style={{ color: m.llmCalls === 0 ? "var(--color-success-text)" : "var(--color-ivory-dim)" }}>{m.llmCalls}</td>
-                  <td className="px-4 py-3 border-b border-border font-mono text-xs text-center" style={{ color: m.cost === "$0.00" ? "var(--color-success-text)" : "var(--color-ivory-dim)" }}>{m.cost}</td>
-                  <td className="px-4 py-3 border-b border-border font-mono text-xs text-ivory-faint text-center">{m.latency}</td>
-                  <td className="px-4 py-3 border-b border-border font-mono text-xs text-ivory-dim text-center">{m.confidence}%</td>
-                  <td className="px-4 py-3 border-b border-border text-center"><span className="inline-block w-1.5 h-1.5 rounded-full bg-success-text" /></td>
-                </tr>
-              ))}
+              {rows.map((m) => {
+                const r = m as Record<string, unknown>;
+                return (
+                  <tr key={String(r.id)} className="hover:bg-surface transition-colors">
+                    <td className="px-4 py-3 border-b border-border text-ivory font-mono text-xs">{String(r.id)}</td>
+                    <td className="px-4 py-3 border-b border-border text-ivory font-light text-xs max-w-[280px] truncate">{String(r.prompt)}</td>
+                    <td className="px-4 py-3 border-b border-border text-ivory-dim text-xs">{String(r.domain)}</td>
+                    <td className="px-4 py-3 border-b border-border text-ivory-dim text-xs">{String(r.dataType)}</td>
+                    <td className="px-4 py-3 border-b border-border"><Badge strategy={String(r.strategy)} variant="strategy">{String(r.strategy)}</Badge></td>
+                    <td className="px-4 py-3 border-b border-border font-mono text-xs text-center" style={{ color: Number(r.tokens) === 0 || r.llmCalls === 0 ? "var(--color-success-text)" : "var(--color-ivory-dim)" }}>
+                      {"llmCalls" in r ? String(r.llmCalls) : String(r.tokens)}
+                    </td>
+                    <td className="px-4 py-3 border-b border-border font-mono text-xs text-center" style={{ color: r.cost === "$0.00" ? "var(--color-success-text)" : "var(--color-ivory-dim)" }}>{String(r.cost)}</td>
+                    <td className="px-4 py-3 border-b border-border font-mono text-xs text-ivory-faint text-center">{String(r.latency)}</td>
+                    <td className="px-4 py-3 border-b border-border font-mono text-xs text-ivory-dim text-center">
+                      {r.confidence == null ? "—" : `${r.confidence}%`}
+                    </td>
+                    <td className="px-4 py-3 border-b border-border text-center">
+                      <span
+                        className={`inline-block w-1.5 h-1.5 rounded-full ${
+                          r.status === "completed" || r.status === "succeeded"
+                            ? "bg-success-text"
+                            : r.status === "failed"
+                              ? "bg-danger-text"
+                              : "bg-gold animate-pulse"
+                        }`}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

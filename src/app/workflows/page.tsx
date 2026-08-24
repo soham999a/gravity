@@ -3,7 +3,21 @@
 import * as React from "react";
 import { Panel, Badge, StatusDot } from "@/components/gravity/primitives";
 
-const WORKFLOWS = [
+interface WorkflowStep {
+  name: string;
+  type: string;
+  agent?: string | null;
+  tools: string[];
+  timeout: number;
+}
+
+interface WorkflowRow {
+  id: string;
+  name: string;
+  description: string;
+  steps: WorkflowStep[];
+}
+const WORKFLOWS: WorkflowRow[] = [
   {
     id: "WF-001", name: "Sales Decline Analysis", description: "Multi-agent analysis of declining sales with data, research, and synthesis",
     steps: [
@@ -63,8 +77,25 @@ const WORKFLOWS = [
 ];
 
 export default function WorkflowsPage() {
-  const [selected, setSelected] = React.useState(WORKFLOWS[0].id);
-  const workflow = WORKFLOWS.find((w) => w.id === selected)!;
+  const [live, setLive] = React.useState<WorkflowRow[] | null>(null);
+  const [selected, setSelected] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    fetch("/api/registry", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((json) => {
+        if (json?.live && Array.isArray(json.workflows) && json.workflows.length > 0) {
+          setLive(json.workflows);
+          setSelected(json.workflows[0].id);
+        } else {
+          setSelected(WORKFLOWS[0].id);
+        }
+      })
+      .catch(() => setSelected(WORKFLOWS[0].id));
+  }, []);
+
+  const workflows = live ?? WORKFLOWS;
+  const workflow = workflows.find((w) => w.id === selected) ?? workflows[0];;
 
   return (
     <div className="p-8 lg:p-20">
@@ -80,7 +111,7 @@ export default function WorkflowsPage() {
         <div className="grid grid-cols-[300px_1fr] gap-6">
           {/* Workflow List */}
           <div className="space-y-0.5">
-            {WORKFLOWS.map((w) => (
+            {workflows.map((w) => (
               <button
                 key={w.id}
                 onClick={() => setSelected(w.id)}

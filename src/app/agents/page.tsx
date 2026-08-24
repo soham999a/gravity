@@ -3,27 +3,42 @@
 import * as React from "react";
 import { Panel, Badge, StatusDot, Bar } from "@/components/gravity/primitives";
 import { Button } from "@/components/ui/button";
+import { useLiveData } from "@/hooks/useLiveData";
 
 const FILTERS = ["All", "LLM", "Statistical", "ML", "Deterministic", "Hybrid", "Human"];
 
-const AGENTS = [
-  { id: "A001", name: "Research Agent", agentClass: "llm", escalation: 3, model: "llama3.3", tools: ["web_search", "url_fetch", "document_reader"], cost: "Medium", reliability: 82, status: "active" },
-  { id: "A002", name: "Forecasting Agent", agentClass: "statistical", escalation: 1, model: "Prophet/XGBoost", tools: ["data_loader", "model_trainer"], cost: "Very Low", reliability: 94, status: "active" },
-  { id: "A003", name: "Data Analyst", agentClass: "hybrid", escalation: 2, model: "mistral+python", tools: ["python_repl", "chart_renderer", "sql_executor"], cost: "Low", reliability: 88, status: "active" },
-  { id: "A004", name: "SQL Agent", agentClass: "deterministic", escalation: 0, model: "None (direct SQL)", tools: ["sql_executor"], cost: "Free", reliability: 99, status: "active" },
-  { id: "A005", name: "Anomaly Detector", agentClass: "ml", escalation: 1, model: "Isolation Forest", tools: ["data_loader"], cost: "Free", reliability: 91, status: "active" },
-  { id: "A006", name: "Planner", agentClass: "llm", escalation: 4, model: "llama3.3", tools: ["task_decomposer"], cost: "Medium", reliability: 85, status: "active" },
-  { id: "A007", name: "Critic", agentClass: "llm", escalation: 4, model: "llama3.3 (cross-model)", tools: ["fact_checker"], cost: "Medium", reliability: 87, status: "active" },
-  { id: "A008", name: "Synthesizer", agentClass: "llm", escalation: 4, model: "llama3.3", tools: ["report_formatter"], cost: "Medium", reliability: 89, status: "active" },
-  { id: "A009", name: "Route Optimizer", agentClass: "deterministic", escalation: 0, model: "OR-Tools", tools: ["optimizer"], cost: "Free", reliability: 98, status: "active" },
-  { id: "A010", name: "Vision Agent", agentClass: "hybrid", escalation: 3, model: "qwen2.5-vl+llm", tools: ["image_reader", "ocr"], cost: "Low", reliability: 83, status: "active" },
-  { id: "A011", name: "Human Reviewer", agentClass: "human", escalation: 6, model: "Human", tools: [], cost: "Human Time", reliability: 100, status: "active" },
-  { id: "A012", name: "Code Agent", agentClass: "hybrid", escalation: 3, model: "llama3.3", tools: ["python_repl", "sandbox"], cost: "Low", reliability: 86, status: "active" },
+interface AgentRow {
+  id: string;
+  name: string;
+  agentClass: string;
+  escalation: number;
+  purpose: string;
+  model: string;
+  tools: string[];
+  reliability: number;
+  status: string;
+}
+
+const FALLBACK_AGENTS: AgentRow[] = [
+  { id: "A001", name: "Research Agent", agentClass: "llm", escalation: 3, purpose: "Deep research with tools", model: "gemini-2.5-flash", tools: ["web_search", "url_fetch", "document_reader"], reliability: 82, status: "active" },
+  { id: "A002", name: "Forecasting Agent", agentClass: "statistical", escalation: 1, purpose: "Time-series forecasting", model: "Prophet/XGBoost", tools: ["data_loader", "model_trainer"], reliability: 94, status: "active" },
+  { id: "A003", name: "Data Analyst", agentClass: "hybrid", escalation: 2, purpose: "Data analysis + charts", model: "gemini+python", tools: ["python_repl", "chart_renderer", "sql_executor"], reliability: 88, status: "active" },
+  { id: "A004", name: "SQL Agent", agentClass: "deterministic", escalation: 0, purpose: "Direct SQL queries", model: "None (direct SQL)", tools: ["sql_executor"], reliability: 99, status: "active" },
+  { id: "A005", name: "Anomaly Detector", agentClass: "ml", escalation: 1, purpose: "Outlier detection", model: "Isolation Forest", tools: ["data_loader"], reliability: 91, status: "active" },
+  { id: "A006", name: "Planner", agentClass: "llm", escalation: 4, purpose: "Mission decomposition", model: "gemini-2.5-flash", tools: ["task_decomposer"], reliability: 85, status: "active" },
+  { id: "A007", name: "Critic", agentClass: "llm", escalation: 4, purpose: "Adversarial review", model: "gpt-oss-120b (cross-model)", tools: ["fact_checker"], reliability: 87, status: "active" },
+  { id: "A008", name: "Synthesizer", agentClass: "llm", escalation: 4, purpose: "Final deliverable merge", model: "gemini-2.5-flash", tools: ["report_formatter"], reliability: 89, status: "active" },
+  { id: "A009", name: "Route Optimizer", agentClass: "deterministic", escalation: 0, purpose: "Operations research", model: "OR-Tools", tools: ["optimizer"], reliability: 98, status: "active" },
+  { id: "A010", name: "Vision Agent", agentClass: "hybrid", escalation: 3, purpose: "Image understanding", model: "gemini-vision+llm", tools: ["image_reader", "ocr"], reliability: 83, status: "active" },
+  { id: "A011", name: "Human Reviewer", agentClass: "human", escalation: 6, purpose: "Final human gate", model: "Human", tools: [], reliability: 100, status: "active" },
+  { id: "A012", name: "Code Agent", agentClass: "hybrid", escalation: 3, purpose: "Code generation + sandbox", model: "deepseek-coder", tools: ["python_repl", "sandbox"], reliability: 86, status: "active" },
 ];
 
 export default function AgentsPage() {
   const [filter, setFilter] = React.useState("All");
-  const filtered = filter === "All" ? AGENTS : AGENTS.filter((a) => a.agentClass === filter.toLowerCase());
+  const { data: liveAgents } = useLiveData<AgentRow>("/api/agents", 10000);
+  const agents = liveAgents ?? FALLBACK_AGENTS;
+  const filtered = filter === "All" ? agents : agents.filter((a) => a.agentClass === filter.toLowerCase());
 
   return (
     <div className="p-8 lg:p-20">

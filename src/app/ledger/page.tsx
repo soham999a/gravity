@@ -2,8 +2,28 @@
 
 import * as React from "react";
 import { Panel, Bar } from "@/components/gravity/primitives";
+import { useLiveData } from "@/hooks/useLiveData";
 
-const ENTRIES = [
+interface LedgerEntry {
+  id: string;
+  task: string;
+  dataProfile: string;
+  complexity: string;
+  candidates: { name: string; score: number; selected: boolean }[];
+  selectedStrategy: string;
+  reasoning: string;
+  rejectedAlternatives: string;
+  llmCalls: number;
+  tokens: number;
+  cost: number;
+  latencyMs: number;
+  confidence: number | null;
+  fallbackPath: string | null;
+  outcome: string;
+  timestamp: string;
+}
+
+const FALLBACK_ENTRIES: LedgerEntry[] = [
   {
     id: "DL-0042", task: "Demand Forecasting — next 30 days", dataProfile: "124,000 records · structured numerical · 18 months history · weekly seasonality · low missingness 2.1%",
     complexity: "Medium · Structured · No semantic reasoning required",
@@ -13,49 +33,43 @@ const ENTRIES = [
       { name: "ARIMA", score: 68, selected: false },
       { name: "LLM Agent", score: 28, selected: false },
     ],
-    selected: "XGBoost — Escalation Level 1 (Statistical/ML)",
-    reasoning: "Strong historical signal. Structured numerical features. No natural-language reasoning required. Low semantic complexity. XGBoost MAPE = 4.2% on holdout.",
-    rejected: "LLM Agent rejected: score 28 — no NL reasoning needed, 50x more expensive, 8x slower",
-    llmCalls: 0, tokens: 0, cost: 0, latency: 3200, confidence: 93,
-    fallback: "Prophet → Small LLM → Human Review",
-    outcome: "success", timestamp: "2026-08-15 09:14:32 UTC",
-  },
-  {
-    id: "DL-0043", task: "Summarise 50 customer complaints", dataProfile: "50 documents · text · mixed sentiment · 5 thematic clusters · 18% duplication",
-    complexity: "Medium · Textual · Semantic reasoning required",
-    candidates: [
-      { name: "LLM Direct", score: 35, selected: false },
-      { name: "Compress+LLM", score: 89, selected: true },
-      { name: "Statistical", score: 42, selected: false },
-      { name: "Multi-Agent", score: 22, selected: false },
-    ],
-    selected: "Intelligence Compression + Small LLM — Escalation L1+L2",
-    reasoning: "Embed, cluster, sample, LLM synthesis. Reduces 50 documents to 5 representatives. 98% token reduction.",
-    rejected: "LLM Direct rejected: 50k tokens, noisy context, $0.15 vs $0.003",
-    llmCalls: 3, tokens: 4200, cost: 0.003, latency: 12400, confidence: 87,
-    fallback: "LLM Direct → Human Review",
-    outcome: "success", timestamp: "2026-08-15 10:02:18 UTC",
-  },
-  {
-    id: "DL-0044", task: "Research Oman real estate market", dataProfile: "Open-ended research · text + documents · multi-source synthesis required",
-    complexity: "High · Open-ended · Requires web retrieval and multi-perspective analysis",
-    candidates: [
-      { name: "SQL Agent", score: 8, selected: false },
-      { name: "Single Agent", score: 52, selected: false },
-      { name: "Multi-Agent", score: 91, selected: true },
-      { name: "Human", score: 65, selected: false },
-    ],
-    selected: "Multi-Agent Workflow — Escalation Level 5",
-    reasoning: "Planner + Parallel Researchers + Analyst + Synthesizer. Multiple independent perspectives needed for comprehensive market analysis.",
-    rejected: "Single Agent rejected: insufficient for multi-source research requiring 5+ web retrievals",
-    llmCalls: 9, tokens: 24000, cost: 0.024, latency: 45000, confidence: 84,
-    fallback: "Human Research Analyst",
-    outcome: "success", timestamp: "2026-08-15 11:30:05 UTC",
+    selectedStrategy: "XGBoost — Escalation Level 1 (Statistical/ML)",
+    reasoning: "Strong historical signal. Structured numerical features. No natural-language reasoning required. Low semantic complexity.",
+    rejectedAlternatives: "LLM Agent rejected: score 28 — no NL reasoning needed, 50x more expensive, 8x slower",
+    llmCalls: 0, tokens: 0, cost: 0, latencyMs: 3200, confidence: 0.93,
+    fallbackPath: "Prophet → Small LLM → Human Review",
+    outcome: "success", timestamp: "2026-08-15T09:14:32Z",
   },
 ];
 
+function mapLive(l: Record<string, unknown>): LedgerEntry {
+  return {
+    id: `DL-${String(l.id).slice(0, 8)}`,
+    task: (l.task as string) ?? "—",
+    dataProfile: (l.dataProfile as string) ?? "—",
+    complexity: (l.complexity as string) ?? "—",
+    candidates: (l.candidates as LedgerEntry["candidates"]) ?? [],
+    selectedStrategy: `${l.selectedStrategy ?? "—"}${l.complexity ? "" : ""}`,
+    reasoning: (l.reasoning as string) ?? "—",
+    rejectedAlternatives: (l.rejectedAlternatives as string) ?? "—",
+    llmCalls: (l.llmCalls as number) ?? 0,
+    tokens: (l.tokens as number) ?? 0,
+    cost: (l.cost as number) ?? 0,
+    latencyMs: (l.latencyMs as number) ?? 0,
+    confidence: l.confidence as number | null,
+    fallbackPath: l.fallbackPath as string | null,
+    outcome: (l.outcome as string) ?? "success",
+    timestamp: new Date(String(l.timestamp)).toISOString().replace("T", " ").slice(0, 19) + " UTC",
+  };
+}
+
 export default function LedgerPage() {
-  const [expanded, setExpanded] = React.useState<string | null>(ENTRIES[0].id);
+  const { data: liveEntries } = useLiveData<Record<string, unknown>>("/api/ledger", 8000);
+  const entries = liveEntries ? liveEntries.map(mapLive) : FALLBACK_ENTRIES;
+  const [expanded, setExpanded] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (entries.length > 0 && expanded === null) setExpanded(entries[0].id);
+  }, [entries, expanded]);
 
   return (
     <div className="p-8 lg:p-20">
@@ -70,7 +84,7 @@ export default function LedgerPage() {
         </div>
 
         <div className="space-y-3">
-          {ENTRIES.map((e) => (
+          {entries.map((e) => (
             <div key={e.id} className="border border-border bg-deep overflow-hidden">
               {/* Header */}
               <button
@@ -83,7 +97,7 @@ export default function LedgerPage() {
                     <span className="text-sm text-ivory font-light">{e.task}</span>
                   </div>
                   <div className="mt-1 text-[11px] text-ivory-faint">
-                    {e.timestamp} · LLM Calls: <span style={{ color: e.llmCalls === 0 ? "var(--color-success-text)" : "var(--color-ivory-dim)" }}>{e.llmCalls}</span> · Cost: <span style={{ color: e.cost === 0 ? "var(--color-success-text)" : "var(--color-ivory-dim)" }}>${e.cost}</span> · Confidence: {e.confidence}%
+                    {e.timestamp} · LLM Calls: <span style={{ color: e.llmCalls === 0 ? "var(--color-success-text)" : "var(--color-ivory-dim)" }}>{e.llmCalls}</span> · Cost: <span style={{ color: e.cost === 0 ? "var(--color-success-text)" : "var(--color-ivory-dim)" }}>${e.cost}</span> · Confidence: {Math.round((e.confidence ?? 0) * 100)}%
                   </div>
                 </div>
                 <span className="font-mono text-[10px] text-gold">{expanded === e.id ? "−" : "+"}</span>
@@ -123,7 +137,7 @@ export default function LedgerPage() {
                   <div className="p-6">
                     <div className="mb-4">
                       <div className="kicker-gold mb-1">Selected Strategy</div>
-                      <div className="text-sm text-gold">{e.selected}</div>
+                      <div className="text-sm text-gold">{e.selectedStrategy}</div>
                     </div>
                     <div className="mb-4">
                       <div className="kicker mb-1">Reasoning</div>
@@ -131,7 +145,7 @@ export default function LedgerPage() {
                     </div>
                     <div className="mb-4">
                       <div className="kicker mb-1">Rejected Alternatives</div>
-                      <div className="text-[12px] text-ivory-faint">{e.rejected}</div>
+                      <div className="text-[12px] text-ivory-faint">{e.rejectedAlternatives}</div>
                     </div>
                     <div className="grid grid-cols-2 gap-3 mb-4">
                       <div className="p-3 border border-border bg-void">
@@ -148,12 +162,12 @@ export default function LedgerPage() {
                       </div>
                       <div className="p-3 border border-border bg-void">
                         <div className="kicker text-[7px] mb-0.5">Latency</div>
-                        <div className="font-serif text-xl text-ivory">{(e.latency / 1000).toFixed(1)}s</div>
+                        <div className="font-serif text-xl text-ivory">{(e.latencyMs / 1000).toFixed(1)}s</div>
                       </div>
                     </div>
                     <div>
                       <div className="kicker mb-1">Fallback Path</div>
-                      <div className="text-[12px] text-ivory-faint">{e.fallback}</div>
+                      <div className="text-[12px] text-ivory-faint">{e.fallbackPath ?? "�"}</div>
                     </div>
                   </div>
                 </div>

@@ -3,9 +3,13 @@
 import * as React from "react";
 import { SectionBlock, Panel, Bar, StatusDot, KeyValue } from "@/components/gravity/primitives";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Zap, ArrowRight, Shield, Brain, DollarSign, Clock, Target, CheckCircle2, ArrowUp, ArrowDown, Minus } from "lucide-react";
+import { PromptComposer } from "@/components/gravity/PromptComposer";
+import { RightSideVisualField } from "@/components/gravity/RightSideVisualField";
+import { LiveMission } from "@/components/gravity/LiveMission";
+import { ArrowRight, Sparkles, CheckCircle2 } from "lucide-react";
+
+type SampleMission = (typeof SAMPLE_MISSIONS)[number];
 
 const SAMPLE_MISSIONS = [
   {
@@ -64,10 +68,12 @@ const PRINCIPLES = [
 ];
 
 export default function GravityControl() {
-  const [selectedMission, setSelectedMission] = React.useState<number | null>(null);
   const [running, setRunning] = React.useState(false);
   const [phase, setPhase] = React.useState(0);
   const [showResult, setShowResult] = React.useState(false);
+  const [customMission, setCustomMission] = React.useState<SampleMission | null>(null);
+  const [activeMission, setActiveMission] = React.useState<SampleMission | null>(null);
+  const [liveMissionId, setLiveMissionId] = React.useState<string | null>(null);
 
   const phases = [
     { name: "Mission Received", detail: "Parsing intent, extracting data requirements, classifying domain." },
@@ -79,10 +85,13 @@ export default function GravityControl() {
     { name: "Result Ready", detail: "Decision Ledger entry created. Feedback signal stored. Mission complete." },
   ];
 
-  const currentMission = selectedMission !== null ? SAMPLE_MISSIONS[selectedMission] : null;
+  const missions = React.useMemo<SampleMission[]>(
+    () => (customMission ? [customMission, ...SAMPLE_MISSIONS] : SAMPLE_MISSIONS),
+    [customMission],
+  );
 
-  const runDemo = (idx: number) => {
-    setSelectedMission(idx);
+  const runDemo = (mission: SampleMission) => {
+    setActiveMission(mission);
     setRunning(true);
     setPhase(0);
     setShowResult(false);
@@ -101,55 +110,110 @@ export default function GravityControl() {
     }, 900);
   };
 
+  const scrollToDemo = () => {
+    requestAnimationFrame(() => {
+      document.getElementById("demo")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
+  const handleIntentSubmit = async (prompt: string) => {
+    // Try the live engine first; fall back to simulation when DB isn't configured.
+    try {
+      const res = await fetch("/api/missions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { missionId: string };
+        setLiveMissionId(data.missionId);
+        setRunning(false);
+        setShowResult(false);
+        setActiveMission(null);
+        scrollToDemo();
+        await fetch(`/api/missions/${data.missionId}/execute`, { method: "POST" });
+        return;
+      }
+    } catch {
+      // live engine offline — simulate below
+    }
+
+    const mission: SampleMission = {
+      title: "Routed from your intent",
+      prompt,
+      strategy: "Auto-Routed",
+      strategyType: "multi",
+      levels: ["L0 Problem profiling", "L1 Statistical pre-analysis", "L5 Multi-agent deliberation"],
+      cost: "$0.008",
+      latency: "~26s",
+    };
+    setCustomMission(mission);
+    scrollToDemo();
+    window.setTimeout(() => runDemo(mission), 450);
+  };
+
+  const runCard = async (m: SampleMission) => {
+    try {
+      const res = await fetch("/api/missions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: m.prompt }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { missionId: string };
+        setLiveMissionId(data.missionId);
+        setRunning(false);
+        setShowResult(false);
+        setActiveMission(null);
+        await fetch(`/api/missions/${data.missionId}/execute`, { method: "POST" });
+        return;
+      }
+    } catch {
+      // live engine offline — simulate below
+    }
+    runDemo(m);
+  };
+
+  const currentMission = activeMission;
+
   return (
     <div>
-      {/* Cover */}
+      {/* Studio Hero */}
       <SectionBlock className="!py-0 !px-0 !border-0">
-        <div className="relative min-h-[80vh] flex flex-col justify-end pb-16 px-8 lg:px-20">
-          <div className="absolute inset-0 opacity-20" style={{
-            backgroundImage: "linear-gradient(var(--color-border) 1px, transparent 1px), linear-gradient(90deg, var(--color-border) 1px, transparent 1px)",
-            backgroundSize: "72px 72px",
-          }} />
-          <div className="absolute inset-0" style={{
-            background: "radial-gradient(ellipse at 75% 30%, rgba(184,150,12,0.05) 0%, transparent 55%)",
-          }} />
-          <div className="relative z-10">
-            <div className="flex items-center gap-3.5 mb-9">
-              <div className="gold-rule" />
-              <span className="kicker-gold">MATRIX Intelligence Infrastructure — New Platform</span>
-            </div>
-            <h1 className="font-serif text-[clamp(72px,11vw,148px)] font-light leading-[0.92] tracking-tight text-ivory mb-5">
-              GRA<span className="text-gold">V</span>ITY
-            </h1>
-            <p className="text-xs font-light tracking-[0.18em] uppercase text-ivory-faint mb-14">
-              Adaptive Intelligence Allocation Framework
-            </p>
-
-            {/* Core Equation */}
-            <div className="border border-border-light bg-gold-pale2 p-6 max-w-[700px] mb-14">
-              <div className="kicker-gold mb-3">Core Equation</div>
-              <div className="font-serif text-xl font-light text-ivory leading-relaxed">
-                <em className="text-gold italic">Optimal Intelligence</em> = f(Quality, Cost, Latency, Risk, Complexity)
+        <div className="studio-hero">
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background:
+                "radial-gradient(ellipse at 78% 32%, rgba(184,150,12,0.05) 0%, transparent 55%)",
+            }}
+          />
+          <div className="studio-hero-grid px-8 lg:px-20">
+            <div className="studio-hero-rail">
+              <div className="flex items-center gap-3.5 mb-8">
+                <div className="gold-rule" />
+                <span className="kicker-gold">MATRIX Intelligence Infrastructure — New Platform</span>
               </div>
-              <p className="text-[13px] text-ivory-faint mt-2">
-                The objective is not maximum intelligence. It is optimal intelligence.
+              <h1 className="studio-hero-title">
+                Create anything.
+                <br />
+                <span>Let intelligence handle the complexity.</span>
+              </h1>
+              <p className="studio-hero-copy">
+                From a simple request to the right combination of models, algorithms, agents, and
+                tools.
               </p>
+              <div className="mt-10 max-w-[720px]">
+                <PromptComposer onSubmit={handleIntentSubmit} />
+              </div>
+              <div className="mt-4 flex items-center gap-3">
+                <Sparkles size={13} style={{ color: "var(--color-gold)" }} />
+                <span className="kicker">
+                  Start with an intent. GRAVITY decides what form of intelligence belongs behind it.
+                </span>
+              </div>
             </div>
-
-            {/* Meta */}
-            <div className="flex gap-0 border-t border-border pt-7 flex-wrap">
-              {[
-                { label: "Classification", value: "Technology Platform — Concept" },
-                { label: "Status", value: "Architecture Draft Phase 0" },
-                { label: "Author", value: "Somnath Banerjee MATRIX" },
-                { label: "Date", value: "August 2026" },
-              ].map((m, i) => (
-                <div key={i} className="pr-9 mr-9 border-r border-border last:border-0 last:pr-0 last:mr-0">
-                  <div className="kicker mb-1">{m.label}</div>
-                  <div className="text-[13px] text-ivory">{m.value}</div>
-                </div>
-              ))}
-            </div>
+            <RightSideVisualField />
           </div>
         </div>
       </SectionBlock>
@@ -237,7 +301,7 @@ export default function GravityControl() {
       </SectionBlock>
 
       {/* Interactive Demo */}
-      <SectionBlock>
+      <SectionBlock id="demo">
         <div className="grid grid-cols-[140px_1fr] gap-12 mb-16 pb-10 border-b border-border">
           <div><span className="section-number">Demo</span></div>
           <div>
@@ -263,15 +327,20 @@ export default function GravityControl() {
             </span>
           </div>
           <div className="p-8">
+            {/* Live engine output */}
+            {liveMissionId ? (
+              <LiveMission missionId={liveMissionId} />
+            ) : (
+              <>
             {/* Mission Cards */}
             {!running && !showResult && (
               <div>
                 <div className="kicker mb-4">Select a Mission to Execute</div>
                 <div className="grid grid-cols-1 gap-3">
-                  {SAMPLE_MISSIONS.map((m, i) => (
+                  {missions.map((m, i) => (
                     <button
-                      key={i}
-                      onClick={() => runDemo(i)}
+                      key={`${m.title}-${i}`}
+                      onClick={() => runCard(m)}
                       className="w-full text-left p-5 border border-border bg-void hover:border-gold/30 transition-all group"
                     >
                       <div className="flex items-start justify-between mb-2">
@@ -354,7 +423,7 @@ export default function GravityControl() {
                 <div className="flex items-center justify-between mb-6">
                   <div className="kicker mb-0">Result — {currentMission.title}</div>
                   <button
-                    onClick={() => { setShowResult(false); setSelectedMission(null); setPhase(0); }}
+                    onClick={() => { setShowResult(false); setActiveMission(null); setPhase(0); }}
                     className="font-mono text-[9px] tracking-[0.12em] uppercase text-gold hover:text-gold/80 transition-colors"
                   >
                     Run Another →
@@ -423,9 +492,13 @@ export default function GravityControl() {
                       "Pure deterministic computation. OR-Tools vehicle routing solver optimised 150 stops across 3 vehicles. No LLM required. 100% exact solution."}
                     {currentMission.title === "Transaction Anomalies" &&
                       "SQL window functions computed rolling statistics. Isolation Forest flagged 23 anomalies from 10k transactions. No LLM required for this statistical task."}
+                    {currentMission.title === "Routed from your intent" &&
+                      "Your intent was profiled (domain, complexity, risk) and routed up the escalation ladder only as far as needed. L0 structured the problem, statistical pre-analysis validated the signal, and multi-agent deliberation produced the strategy — every step visible in the Decision Ledger."}
                   </p>
                 </div>
               </div>
+            )}
+              </>
             )}
           </div>
         </div>

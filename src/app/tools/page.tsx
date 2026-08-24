@@ -1,22 +1,40 @@
 "use client";
 
+import * as React from "react";
 import { Panel, StatusDot, Bar } from "@/components/gravity/primitives";
 import { Button } from "@/components/ui/button";
 
-const TOOLS = [
-  { id: "T001", name: "Web Search", type: "Retrieval", permission: "Read", latency: "500-2000ms", successRate: 96, status: "active" },
-  { id: "T002", name: "URL Fetch", type: "Retrieval", permission: "Read", latency: "200-1500ms", successRate: 94, status: "active" },
-  { id: "T003", name: "SQL Executor", type: "Data", permission: "Read-only", latency: "50-500ms", successRate: 99, status: "active" },
-  { id: "T004", name: "Python REPL", type: "Compute", permission: "Sandboxed", latency: "100-5000ms", successRate: 92, status: "active" },
-  { id: "T005", name: "Chart Renderer", type: "Output", permission: "Write", latency: "200-800ms", successRate: 98, status: "active" },
-  { id: "T006", name: "Document Reader", type: "Retrieval", permission: "Read", latency: "50-200ms", successRate: 99, status: "active" },
-  { id: "T007", name: "File I/O", type: "Storage", permission: "Scoped R/W", latency: "10-100ms", successRate: 99, status: "active" },
-  { id: "T008", name: "HTTP Client", type: "Integration", permission: "Scoped", latency: "100-3000ms", successRate: 93, status: "active" },
-  { id: "T009", name: "OCR Engine", type: "Vision", permission: "Read", latency: "500-2000ms", successRate: 89, status: "active" },
-  { id: "T010", name: "Optimizer (OR-Tools)", type: "Compute", permission: "None", latency: "100-10000ms", successRate: 97, status: "active" },
+interface ToolRow {
+  id: string;
+  name: string;
+  type: string;
+  permissions: string;
+  latencyMs: number;
+  successRate: number;
+  status: string;
+}
+
+const FALLBACK_TOOLS: ToolRow[] = [
+  { id: "T001", name: "Web Search", type: "Retrieval", permissions: "Read", latencyMs: 1250, successRate: 96, status: "active" },
+  { id: "T002", name: "URL Fetch", type: "Retrieval", permissions: "Read", latencyMs: 850, successRate: 94, status: "active" },
+  { id: "T003", name: "SQL Executor", type: "Data", permissions: "Read-only", latencyMs: 275, successRate: 99, status: "active" },
+  { id: "T004", name: "Python REPL", type: "Compute", permissions: "Sandboxed", latencyMs: 2550, successRate: 92, status: "active" },
 ];
 
 export default function ToolsPage() {
+  const [rows, setRows] = React.useState<ToolRow[] | null>(null);
+
+  React.useEffect(() => {
+    fetch("/api/registry", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((json) => {
+        if (json?.live && Array.isArray(json.items) && json.items.length > 0) setRows(json.items);
+      })
+      .catch(() => {});
+  }, []);
+
+  const tools = rows ?? FALLBACK_TOOLS;
+
   return (
     <div className="p-8 lg:p-20">
       <div className="max-w-[1200px] mx-auto">
@@ -43,7 +61,7 @@ export default function ToolsPage() {
               </tr>
             </thead>
             <tbody>
-              {TOOLS.map((t) => (
+              {tools.map((t) => (
                 <tr key={t.id} className="hover:bg-surface transition-colors">
                   <td className="px-4 py-3 border-b border-border">
                     <div className="text-ivory font-light text-xs">{t.name}</div>
@@ -52,8 +70,8 @@ export default function ToolsPage() {
                   <td className="px-4 py-3 border-b border-border">
                     <span className="font-mono text-[8px] px-2 py-0.5 border border-border-light text-ivory-faint">{t.type}</span>
                   </td>
-                  <td className="px-4 py-3 border-b border-border text-ivory-dim text-xs">{t.permission}</td>
-                  <td className="px-4 py-3 border-b border-border font-mono text-[11px] text-ivory-faint text-center">{t.latency}</td>
+                  <td className="px-4 py-3 border-b border-border text-ivory-dim text-xs">{t.permissions}</td>
+                  <td className="px-4 py-3 border-b border-border font-mono text-[11px] text-ivory-faint text-center">{t.latencyMs >= 1000 ? `${(t.latencyMs / 1000).toFixed(1)}s` : `${t.latencyMs}ms`}</td>
                   <td className="px-4 py-3 border-b border-border">
                     <div className="flex items-center gap-2">
                       <Bar value={t.successRate} color={t.successRate > 95 ? "success" : t.successRate > 90 ? "gold" : "warning"} />

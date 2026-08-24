@@ -2,19 +2,38 @@
 
 import { Panel, StatusDot, Bar } from "@/components/gravity/primitives";
 import { Button } from "@/components/ui/button";
+import * as React from "react";
+import { useLiveData } from "@/hooks/useLiveData";
 
-const MODELS = [
-  { id: "M001", name: "Llama 3.3 70B", provider: "Meta (Ollama)", capability: "Advanced Reasoning", costPerToken: 0, latency: "5-30s", context: "128K", quality: 88, placement: "local", status: "active" },
-  { id: "M002", name: "Mistral 7B", provider: "Mistral (Ollama)", capability: "General + Code", costPerToken: 0, latency: "0.5-4s", context: "32K", quality: 78, placement: "local", status: "active" },
-  { id: "M003", name: "Llama 3.2 3B", provider: "Meta (Ollama)", capability: "Lightweight Tasks", costPerToken: 0, latency: "0.3-2s", context: "16K", quality: 68, placement: "local", status: "active" },
-  { id: "M004", name: "Qwen 2.5 1.5B", provider: "Alibaba (Ollama)", capability: "Ultra-Lightweight", costPerToken: 0, latency: "0.2-1s", context: "8K", quality: 58, placement: "local", status: "active" },
-  { id: "M005", name: "Qwen 2.5 VL", provider: "Alibaba (Ollama)", capability: "Vision + Language", costPerToken: 0, latency: "1-5s", context: "32K", quality: 82, placement: "local", status: "active" },
-  { id: "M006", name: "Nomic Embed", provider: "Nomic (local)", capability: "Embeddings", costPerToken: 0, latency: "10-50ms", context: "8K", quality: 85, placement: "local", status: "active" },
-  { id: "M007", name: "GPT-4o", provider: "OpenAI (Cloud)", capability: "Advanced General", costPerToken: 0.000005, latency: "2-15s", context: "128K", quality: 95, placement: "cloud", status: "active" },
-  { id: "M008", name: "Claude 3.5 Sonnet", provider: "Anthropic (Cloud)", capability: "Analysis + Code", costPerToken: 0.000003, latency: "2-12s", context: "200K", quality: 93, placement: "cloud", status: "active" },
+interface ModelRow {
+  id: string;
+  name: string;
+  provider: string;
+  capability: string;
+  costPerToken: number;
+  latencyMs: number;
+  contextWindow: number;
+  quality: number;
+  placement: string;
+  status: string;
+}
+
+const FALLBACK_MODELS: ModelRow[] = [
+  { id: "M001", name: "Gemini 2.5 Flash", provider: "Google (cloud)", capability: "General Reasoning", costPerToken: 0, latencyMs: 2500, contextWindow: 1048576, quality: 90, placement: "cloud", status: "active" },
+  { id: "M002", name: "Gemini 2.5 Flash-Lite", provider: "Google (cloud)", capability: "Fast Synthesis", costPerToken: 0, latencyMs: 1200, contextWindow: 1048576, quality: 82, placement: "cloud", status: "active" },
+  { id: "M003", name: "Llama 3.3 70B (Groq)", provider: "Groq (cloud)", capability: "Advanced Reasoning", costPerToken: 0, latencyMs: 900, contextWindow: 131072, quality: 88, placement: "cloud", status: "active" },
+  { id: "M004", name: "Nomic Embed", provider: "Local", capability: "Embeddings", costPerToken: 0, latencyMs: 40, contextWindow: 8192, quality: 90, placement: "local", status: "active" },
 ];
 
+function fmtContext(n: number) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}K`;
+  return String(n);
+}
+
 export default function ModelsPage() {
+  const { data: liveModels } = useLiveData<ModelRow>("/api/models", 15000);
+  const rows = liveModels ?? FALLBACK_MODELS;
   return (
     <div className="p-8 lg:p-20">
       <div className="max-w-[1200px] mx-auto">
@@ -23,7 +42,7 @@ export default function ModelsPage() {
             <div className="kicker-gold mb-3">Registry</div>
             <h1 className="section-title mb-4">Model <em>Registry</em></h1>
             <p className="section-desc">
-              Provider-agnostic model catalog. Ollama primary. Cloud optional for verified edge cases only.
+              Provider-agnostic model catalog. Free cloud inference primary (Gemini + Groq). Zero-cost missions by design.
             </p>
           </div>
           <Button variant="outline">Register Model</Button>
@@ -41,7 +60,7 @@ export default function ModelsPage() {
               </tr>
             </thead>
             <tbody>
-              {MODELS.map((m) => (
+              {rows.map((m) => (
                 <tr key={m.id} className="hover:bg-surface transition-colors">
                   <td className="px-4 py-3 border-b border-border text-ivory font-light text-xs">{m.name}</td>
                   <td className="px-4 py-3 border-b border-border text-ivory-dim text-xs">{m.provider}</td>
@@ -49,8 +68,8 @@ export default function ModelsPage() {
                   <td className="px-4 py-3 border-b border-border font-mono text-xs text-center" style={{ color: m.costPerToken === 0 ? "var(--color-success-text)" : "var(--color-ivory-dim)" }}>
                     {m.costPerToken === 0 ? "$0.00" : `$${m.costPerToken}`}
                   </td>
-                  <td className="px-4 py-3 border-b border-border font-mono text-[11px] text-ivory-faint text-center">{m.latency}</td>
-                  <td className="px-4 py-3 border-b border-border font-mono text-[11px] text-ivory-faint text-center">{m.context}</td>
+                  <td className="px-4 py-3 border-b border-border font-mono text-[11px] text-ivory-faint text-center">{m.latencyMs >= 1000 ? `${(m.latencyMs / 1000).toFixed(1)}s` : `${m.latencyMs}ms`}</td>
+                  <td className="px-4 py-3 border-b border-border font-mono text-[11px] text-ivory-faint text-center">{fmtContext(m.contextWindow)}</td>
                   <td className="px-4 py-3 border-b border-border">
                     <div className="flex items-center gap-2">
                       <Bar value={m.quality} color={m.quality > 85 ? "success" : m.quality > 70 ? "gold" : "warning"} />
