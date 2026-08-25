@@ -7,7 +7,7 @@
   "crons": [
     {
       "path": "/api/cron/stale-missions",
-      "schedule": "*/10 * * * *",
+      "schedule": "0 0 * * *",
       "config": {
         "envVars": ["CRON_SECRET"]
       }
