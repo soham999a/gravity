@@ -23,6 +23,8 @@ export async function getAuthContext(): Promise<AuthContext | null> {
       error: authError,
     } = await supabase.auth.getUser();
 
+    console.log("[tenant] auth user:", user?.id ?? "NONE", "email:", user?.email ?? "NONE", "error:", authError?.message ?? "none");
+
     if (authError) {
       console.error("[tenant] supabase auth.getUser error:", authError.message);
       return null;

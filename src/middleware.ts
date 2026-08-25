@@ -45,7 +45,10 @@ export async function middleware(request: NextRequest) {
 
     const {
       data: { user },
+      error,
     } = await supabase.auth.getUser();
+
+    console.log("[middleware]", pathname, "user:", user?.id ?? "NONE", "error:", error?.message ?? "none");
 
     // Refresh session for authenticated users hitting login/signup.
     if (user && (pathname === "/login" || pathname === "/signup")) {

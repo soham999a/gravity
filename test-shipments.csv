@@ -1,0 +1,101 @@
+shipment_id,date,carrier,route,cost_usd,delay_days,on_time,status,weight_kg,origin,destination
+SHP-001,2025-01-05,FedEx,Mumbai→Delhi,245,0,Yes,Delivered,12.5,Mumbai,Delhi
+SHP-002,2025-01-06,DHL,Mumbai→Chennai,312,2,No,Delivered,8.3,Mumbai,Chennai
+SHP-003,2025-01-06,BlueDart,Bangalore→Hyderabad,198,0,Yes,Delivered,5.1,Bangalore,Hyderabad
+SHP-004,2025-01-07,FedEx,Delhi→Kolkata,420,5,No,Delivered,22.0,Delhi,Kolkata
+SHP-005,2025-01-07,Amazon Logistics,Mumbai→Pune,89,0,Yes,Delivered,3.2,Mumbai,Pune
+SHP-006,2025-01-08,Delhivery,Chennai→Bangalore,156,1,No,Delivered,9.7,Chennai,Bangalore
+SHP-007,2025-01-08,FedEx,Mumbai→Delhi,258,0,Yes,Delivered,14.1,Mumbai,Delhi
+SHP-008,2025-01-09,DHL,Delhi→Mumbai,390,3,No,Delivered,31.5,Delhi,Mumbai
+SHP-009,2025-01-09,BlueDart,Kolkata→Chennai,275,0,Yes,Delivered,7.8,Kolkata,Chennai
+SHP-010,2025-01-10,FedEx,Hyderabad→Mumbai,340,4,No,Delivered,18.9,Hyderabad,Mumbai
+SHP-011,2025-01-10,Amazon Logistics,Pune→Mumbai,75,0,Yes,Delivered,2.4,Pune,Mumbai
+SHP-012,2025-01-11,Delhivery,Delhi→Bangalore,485,7,No,Delivered,45.2,Delhi,Bangalore
+SHP-013,2025-01-11,DHL,Mumbai→Chennai,315,0,Yes,Delivered,11.3,Mumbai,Chennai
+SHP-014,2025-01-12,FedEx,Bangalore→Delhi,395,2,No,Delivered,16.7,Bangalore,Delhi
+SHP-015,2025-01-12,BlueDart,Chennai→Kolkata,290,0,Yes,Delivered,6.9,Chennai,Kolkata
+SHP-016,2025-01-13,Amazon Logistics,Mumbai→Delhi,198,0,Yes,In Transit,10.2,Mumbai,Delhi
+SHP-017,2025-01-13,FedEx,Delhi→Hyderabad,445,6,No,Delivered,28.4,Delhi,Hyderabad
+SHP-018,2025-01-14,DHL,Mumbai→Kolkata,510,8,No,Delayed,38.7,Mumbai,Kolkata
+SHP-019,2025-01-14,Delhivery,Hyderabad→Chennai,225,1,No,Delivered,13.6,Hyderabad,Chennai
+SHP-020,2025-01-15,FedEx,Bangalore→Mumbai,320,0,Yes,Delivered,15.8,Bangalore,Mumbai
+SHP-021,2025-01-15,BlueDart,Delhi→Chennai,460,3,No,Delivered,24.3,Delhi,Chennai
+SHP-022,2025-01-16,Amazon Logistics,Pune→Bangalore,145,0,Yes,Delivered,4.6,Pune,Bangalore
+SHP-023,2025-01-16,DHL,Mumbai→Delhi,275,1,No,Delivered,19.1,Mumbai,Delhi
+SHP-024,2025-01-17,FedEx,Chennai→Hyderabad,180,0,Yes,Delivered,7.2,Chennai,Hyderabad
+SHP-025,2025-01-17,Delhivery,Kolkata→Delhi,385,5,No,Delivered,20.8,Kolkata,Delhi
+SHP-026,2025-01-18,BlueDart,Mumbai→Pune,92,0,Yes,Delivered,3.0,Mumbai,Pune
+SHP-027,2025-01-18,FedEx,Delhi→Mumbai,398,3,No,Delivered,35.6,Delhi,Mumbai
+SHP-028,2025-01-19,DHL,Bangalore→Chennai,210,0,Yes,In Transit,8.9,Bangalore,Chennai
+SHP-029,2025-01-19,Amazon Logistics,Hyderabad→Mumbai,355,2,No,Delivered,21.7,Hyderabad,Mumbai
+SHP-030,2025-01-20,FedEx,Mumbai→Kolkata,475,9,No,Delayed,42.3,Mumbai,Kolkata
+SHP-031,2025-01-20,Delhivery,Delhi→Pune,290,0,Yes,Delivered,12.8,Delhi,Pune
+SHP-032,2025-01-21,BlueDart,Chennai→Mumbai,305,1,No,Delivered,17.5,Chennai,Mumbai
+SHP-033,2025-01-21,DHL,Bangalore→Delhi,415,4,No,Delivered,26.1,Bangalore,Delhi
+SHP-034,2025-01-22,FedEx,Mumbai→Hyderabad,285,0,Yes,Delivered,14.4,Mumbai,Hyderabad
+SHP-035,2025-01-22,Amazon Logistics,Pune→Chennai,215,0,Yes,Delivered,6.3,Pune,Chennai
+SHP-036,2025-01-23,Delhivery,Kolkata→Mumbai,498,11,No,Delayed,50.1,Kolkata,Mumbai
+SHP-037,2025-01-23,FedEx,Delhi→Hyderabad,350,2,No,Delivered,22.9,Delhi,Hyderabad
+SHP-038,2025-01-24,BlueDart,Mumbai→Chennai,330,0,Yes,Delivered,13.2,Mumbai,Chennai
+SHP-039,2025-01-24,DHL,Bangalore→Mumbai,380,3,No,Delivered,25.4,Bangalore,Mumbai
+SHP-040,2025-01-25,FedEx,Hyderabad→Delhi,425,6,No,Delivered,33.7,Hyderabad,Delhi
+SHP-041,2025-01-25,Amazon Logistics,Mumbai→Pune,85,0,Yes,Delivered,2.8,Mumbai,Pune
+SHP-042,2025-01-26,Delhivery,Chennai→Bangalore,168,1,No,Delivered,10.4,Chennai,Bangalore
+SHP-043,2025-01-26,FedEx,Delhi→Kolkata,445,7,No,Delivered,36.8,Delhi,Kolkata
+SHP-044,2025-01-27,BlueDart,Mumbai→Delhi,260,0,Yes,Delivered,15.3,Mumbai,Delhi
+SHP-045,2025-01-27,DHL,Hyderabad→Chennai,235,2,No,Delivered,16.2,Hyderabad,Chennai
+SHP-046,2025-01-28,FedEx,Bangalore→Hyderabad,195,0,Yes,In Transit,9.1,Bangalore,Hyderabad
+SHP-047,2025-01-28,Amazon Logistics,Delhi→Pune,310,0,Yes,Delivered,18.5,Delhi,Pune
+SHP-048,2025-01-29,Delhivery,Mumbai→Chennai,340,4,No,Delivered,29.3,Mumbai,Chennai
+SHP-049,2025-01-29,FedEx,Kolkata→Delhi,395,2,No,Delivered,23.6,Kolkata,Delhi
+SHP-050,2025-01-30,DHL,Mumbai→Delhi,280,0,Yes,Delivered,16.8,Mumbai,Delhi
+SHP-051,2025-01-30,BlueDart,Chennai→Kolkata,300,1,No,Delivered,8.5,Chennai,Kolkata
+SHP-052,2025-01-31,FedEx,Delhi→Mumbai,410,5,No,Delivered,34.2,Delhi,Mumbai
+SHP-053,2025-01-31,Amazon Logistics,Pune→Mumbai,82,0,Yes,Delivered,2.6,Pune,Mumbai
+SHP-054,2025-02-01,DHL,Bangalore→Delhi,465,8,No,Delayed,41.7,Bangalore,Delhi
+SHP-055,2025-02-01,Delhivery,Mumbai→Hyderabad,295,0,Yes,Delivered,17.9,Mumbai,Hyderabad
+SHP-056,2025-02-02,FedEx,Hyderabad→Kolkata,380,3,No,Delivered,20.3,Hyderabad,Kolkata
+SHP-057,2025-02-02,BlueDart,Chennai→Mumbai,320,1,No,Delivered,14.7,Chennai,Mumbai
+SHP-058,2025-02-03,Amazon Logistics,Delhi→Bangalore,350,0,Yes,In Transit,22.1,Delhi,Bangalore
+SHP-059,2025-02-03,DHL,Mumbai→Chennai,305,2,No,Delivered,18.6,Mumbai,Chennai
+SHP-060,2025-02-04,FedEx,Kolkata→Mumbai,520,10,No,Delayed,55.3,Kolkata,Mumbai
+SHP-061,2025-02-04,Delhivery,Pune→Delhi,275,0,Yes,Delivered,11.4,Pune,Delhi
+SHP-062,2025-02-05,BlueDart,Mumbai→Bangalore,290,0,Yes,Delivered,16.5,Mumbai,Bangalore
+SHP-063,2025-02-05,FedEx,Chennai→Hyderabad,185,1,No,Delivered,7.8,Chennai,Hyderabad
+SHP-064,2025-02-06,DHL,Delhi→Kolkata,435,4,No,Delivered,29.8,Delhi,Kolkata
+SHP-065,2025-02-06,Amazon Logistics,Mumbai→Pune,90,0,Yes,Delivered,3.1,Mumbai,Pune
+SHP-066,2025-02-07,FedEx,Hyderabad→Mumbai,365,2,No,Delivered,24.2,Hyderabad,Mumbai
+SHP-067,2025-02-07,Delhivery,Bangalore→Chennai,175,0,Yes,Delivered,9.9,Bangalore,Chennai
+SHP-068,2025-02-08,BlueDart,Delhi→Mumbai,405,6,No,Delivered,37.4,Delhi,Mumbai
+SHP-069,2025-02-08,DHL,Kolkata→Chennai,285,1,No,Delivered,12.1,Kolkata,Chennai
+SHP-070,2025-02-09,FedEx,Mumbai→Delhi,250,0,Yes,Delivered,14.8,Mumbai,Delhi
+SHP-071,2025-02-09,Amazon Logistics,Chennai→Pune,230,0,Yes,Delivered,7.4,Chennai,Pune
+SHP-072,2025-02-10,Delhivery,Delhi→Hyderabad,395,3,No,Delivered,26.5,Delhi,Hyderabad
+SHP-073,2025-02-10,FedEx,Bangalore→Mumbai,340,1,No,Delivered,20.8,Bangalore,Mumbai
+SHP-074,2025-02-11,DHL,Mumbai→Kolkata,480,7,No,Delayed,43.9,Mumbai,Kolkata
+SHP-075,2025-02-11,BlueDart,Hyderabad→Delhi,310,0,Yes,Delivered,15.4,Hyderabad,Delhi
+SHP-076,2025-02-12,FedEx,Chennai→Mumbai,325,2,No,Delivered,19.3,Chennai,Mumbai
+SHP-077,2025-02-12,Amazon Logistics,Pune→Bangalore,150,0,Yes,Delivered,4.9,Pune,Bangalore
+SHP-078,2025-02-13,Delhivery,Kolkata→Delhi,400,5,No,Delivered,30.2,Kolkata,Delhi
+SHP-079,2025-02-13,DHL,Mumbai→Chennai,318,0,Yes,Delivered,12.7,Mumbai,Chennai
+SHP-080,2025-02-14,FedEx,Delhi→Bangalore,450,9,No,Delayed,48.6,Delhi,Bangalore
+SHP-081,2025-02-14,BlueDart,Bangalore→Hyderabad,200,0,Yes,Delivered,8.2,Bangalore,Hyderabad
+SHP-082,2025-02-15,Amazon Logistics,Mumbai→Delhi,265,1,No,Delivered,16.1,Mumbai,Delhi
+SHP-083,2025-02-15,FedEx,Hyderabad→Chennai,220,0,Yes,Delivered,11.5,Hyderabad,Chennai
+SHP-084,2025-02-16,Delhivery,Chennai→Delhi,430,4,No,Delivered,27.8,Chennai,Delhi
+SHP-085,2025-02-16,DHL,Mumbai→Pune,95,0,Yes,Delivered,3.4,Mumbai,Pune
+SHP-086,2025-02-17,FedEx,Delhi→Kolkata,440,3,No,Delivered,32.1,Delhi,Kolkata
+SHP-087,2025-02-17,BlueDart,Bangalore→Mumbai,355,2,No,Delivered,22.4,Bangalore,Mumbai
+SHP-088,2025-02-18,Amazon Logistics,Chennai→Hyderabad,190,0,Yes,Delivered,6.8,Chennai,Hyderabad
+SHP-089,2025-02-18,Delhivery,Mumbai→Delhi,270,0,Yes,Delivered,17.3,Mumbai,Delhi
+SHP-090,2025-02-19,DHL,Kolkata→Mumbai,505,12,No,Delayed,58.2,Kolkata,Mumbai
+SHP-091,2025-02-19,FedEx,Hyderabad→Delhi,375,1,No,Delivered,21.6,Hyderabad,Delhi
+SHP-092,2025-02-20,BlueDart,Delhi→Chennai,455,5,No,Delivered,33.5,Delhi,Chennai
+SHP-093,2025-02-20,Amazon Logistics,Pune→Mumbai,88,0,Yes,Delivered,2.9,Pune,Mumbai
+SHP-094,2025-02-21,DHL,Bangalore→Kolkata,470,6,No,Delivered,39.4,Bangalore,Kolkata
+SHP-095,2025-02-21,Delhivery,Chennai→Mumbai,310,0,Yes,Delivered,15.9,Chennai,Mumbai
+SHP-096,2025-02-22,FedEx,Mumbai→Hyderabad,290,2,No,Delivered,18.4,Mumbai,Hyderabad
+SHP-097,2025-02-22,BlueDart,Delhi→Pune,305,0,Yes,Delivered,13.7,Delhi,Pune
+SHP-098,2025-02-23,Amazon Logistics,Bangalore→Chennai,170,1,No,Delivered,9.3,Bangalore,Chennai
+SHP-099,2025-02-23,DHL,Mumbai→Delhi,385,3,No,Delivered,27.6,Mumbai,Delhi
+SHP-100,2025-02-24,FedEx,Kolkata→Hyderabad,400,8,No,Delayed,44.8,Kolkata,Hyderabad
