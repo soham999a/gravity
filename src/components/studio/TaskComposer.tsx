@@ -3,6 +3,11 @@
 import * as React from "react";
 import { ArrowRight, FileSpreadsheet, Paperclip, Sparkles, X } from "lucide-react";
 
+export interface CsvFile {
+  data: string;
+  name: string;
+}
+
 export function TaskComposer({
   initialValue = "",
   busy = false,
@@ -12,36 +17,39 @@ export function TaskComposer({
   initialValue?: string;
   busy?: boolean;
   compact?: boolean;
-  onSubmit: (prompt: string, csvData?: string, csvFileName?: string) => void;
+  onSubmit: (prompt: string, files?: CsvFile[]) => void;
 }) {
   const [prompt, setPrompt] = React.useState(initialValue);
-  const [csvData, setCsvData] = React.useState<string | null>(null);
-  const [csvFileName, setCsvFileName] = React.useState<string | null>(null);
+  const [files, setFiles] = React.useState<CsvFile[]>([]);
   const [dragOver, setDragOver] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const canSubmit = prompt.trim().length > 0 && !busy;
 
-  const handleFile = (file: File) => {
+  const addFile = (file: File) => {
     if (!file.name.endsWith(".csv") && !file.name.endsWith(".tsv") && !file.name.endsWith(".txt")) {
       return;
     }
     const reader = new FileReader();
     reader.onload = () => {
-      setCsvData(reader.result as string);
-      setCsvFileName(file.name);
+      const csv = reader.result as string;
+      setFiles((prev) => [...prev, { data: csv, name: file.name }]);
     };
     reader.readAsText(file);
+  };
+
+  const addFiles = (fileList: FileList) => {
+    Array.from(fileList).forEach(addFile);
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
+    if (e.dataTransfer.files.length > 0) {
+      addFiles(e.dataTransfer.files);
+    }
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
-    // If clipboard contains a file, handle it
     const items = e.clipboardData?.items;
     if (items) {
       for (const item of items) {
@@ -49,7 +57,7 @@ export function TaskComposer({
           const file = item.getAsFile();
           if (file) {
             e.preventDefault();
-            handleFile(file);
+            addFile(file);
             return;
           }
         }
@@ -57,20 +65,19 @@ export function TaskComposer({
     }
   };
 
-  const removeFile = () => {
-    setCsvData(null);
-    setCsvFileName(null);
+  const removeFile = (index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
   const submit = () => {
     if (!canSubmit) return;
     onSubmit(
       prompt.trim(),
-      csvData ?? undefined,
-      csvFileName ?? undefined,
+      files.length > 0 ? files : undefined,
     );
-    // Don't clear CSV — user might want to iterate
   };
+
+  const totalSize = files.reduce((sum, f) => sum + f.data.length, 0);
 
   return (
     <div
@@ -86,29 +93,36 @@ export function TaskComposer({
         ref={fileInputRef}
         type="file"
         accept=".csv,.tsv,.txt"
+        multiple
         className="hidden"
         onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) handleFile(file);
+          if (e.target.files) addFiles(e.target.files);
           e.target.value = "";
         }}
       />
 
-      {csvFileName ? (
-        <div className="gravity-composer-file">
-          <FileSpreadsheet className="size-4 text-gold" />
-          <span className="truncate max-w-[200px]">{csvFileName}</span>
-          <span className="text-[10px] uppercase tracking-widest" style={{ fontFamily: "var(--font-mono)", color: "var(--color-muted-foreground)" }}>
-            {csvData ? `${(csvData.length / 1024).toFixed(1)} KB` : ""}
-          </span>
-          <button
-            type="button"
-            onClick={removeFile}
-            className="ml-auto text-[color:var(--color-muted-foreground)] hover:text-gold"
-            aria-label="Remove file"
-          >
-            <X className="size-3.5" />
-          </button>
+      {files.length > 0 ? (
+        <div className="gravity-composer-files">
+          {files.map((f, i) => (
+            <div key={`${f.name}-${i}`} className="gravity-composer-file">
+              <FileSpreadsheet className="size-4 text-gold shrink-0" />
+              <span className="truncate max-w-[180px]">{f.name}</span>
+              <span className="gravity-composer-file-size">
+                {(f.data.length / 1024).toFixed(1)} KB
+              </span>
+              <button
+                type="button"
+                onClick={() => removeFile(i)}
+                className="ml-auto text-[color:var(--color-muted-foreground)] hover:text-gold shrink-0"
+                aria-label={`Remove ${f.name}`}
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          ))}
+          <div className="gravity-composer-file-summary">
+            {files.length} file{files.length > 1 ? "s" : ""} · {(totalSize / 1024).toFixed(1)} KB total
+          </div>
         </div>
       ) : null}
 
@@ -126,7 +140,7 @@ export function TaskComposer({
           onPaste={handlePaste}
           rows={compact ? 2 : 4}
           placeholder={
-            csvFileName
+            files.length > 0
               ? "Describe what you want to analyze in this data…"
               : "Tell GRAVITY what you want to create…"
           }
@@ -140,10 +154,10 @@ export function TaskComposer({
             type="button"
             onClick={() => fileInputRef.current?.click()}
             className="gravity-composer-attach"
-            title="Attach a CSV file"
+            title="Attach CSV files"
           >
             <Paperclip className="size-3.5" />
-            <span className="hidden sm:inline">CSV</span>
+            <span className="hidden sm:inline">{files.length > 0 ? "Add more" : "CSV"}</span>
           </button>
           <span className="gravity-composer-hint">
             ENTER TO RUN · SHIFT+ENTER NEW LINE
@@ -158,7 +172,7 @@ export function TaskComposer({
       {dragOver ? (
         <div className="gravity-composer-dragoverlay">
           <FileSpreadsheet className="size-6 text-gold" />
-          <span className="studio-eyebrow mt-2">DROP CSV FILE</span>
+          <span className="studio-eyebrow mt-2">DROP CSV FILES</span>
         </div>
       ) : null}
     </div>

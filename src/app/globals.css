@@ -1191,14 +1191,38 @@
   border-color: var(--color-gold) !important;
   background: rgba(184, 150, 12, 0.04) !important;
 }
+.gravity-composer-files {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--color-border);
+}
 .gravity-composer-file {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--color-border);
+  padding: 6px 12px;
   font-size: 12px;
   color: var(--color-ivory-dim);
+  border-bottom: 1px solid var(--color-border);
+}
+.gravity-composer-file:last-of-type {
+  border-bottom: none;
+}
+.gravity-composer-file-size {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  font-family: var(--font-mono);
+  color: var(--color-muted-foreground);
+}
+.gravity-composer-file-summary {
+  padding: 4px 12px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  font-family: var(--font-mono);
+  color: var(--color-muted-foreground);
+  background: rgba(184, 150, 12, 0.04);
 }
 .gravity-composer-attach {
   display: inline-flex;

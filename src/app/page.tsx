@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { ArrowRight, ArrowUpRight, FileText } from "lucide-react";
 import { TaskComposer } from "@/components/studio/TaskComposer";
+import type { CsvFile } from "@/components/studio/TaskComposer";
 import { MissionRun } from "@/components/studio/MissionRun";
 import { RightSideVisualField } from "@/components/gravity/RightSideVisualField";
 
@@ -55,11 +56,11 @@ interface MissionRow {
   createdAt: string;
 }
 
-async function startMission(prompt: string, csvData?: string, csvFileName?: string): Promise<string> {
+async function startMission(prompt: string, files?: CsvFile[]): Promise<string> {
   const res = await fetch("/api/missions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, csvData, csvFileName }),
+    body: JSON.stringify({ prompt, files }),
   });
   if (!res.ok) throw new Error(`Status ${res.status}`);
   const json = (await res.json()) as { missionId: string };
@@ -106,12 +107,12 @@ function HomeContent() {
     }
   }, [missionId]);
 
-  const submit = async (prompt: string, csvData?: string, csvFileName?: string) => {
+  const submit = async (prompt: string, files?: CsvFile[]) => {
     setBusy(true);
     setSubmitError(null);
     setMissionId(null);
     try {
-      const id = await startMission(prompt, csvData, csvFileName);
+      const id = await startMission(prompt, files);
       setMissionId(id);
     } catch {
       setSubmitError(
