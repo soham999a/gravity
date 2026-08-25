@@ -1,41 +1,41 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono, Cormorant_Garamond } from "next/font/google";
+import { Instrument_Serif, Inter_Tight, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
-import { AppShell } from "@/components/layout/AppShell";
+import { StudioShell } from "@/components/studio/StudioShell";
 
-const inter = Inter({
+const instrument = Instrument_Serif({
   subsets: ["latin"],
-  variable: "--font-sans",
-  weight: ["300", "400", "500", "600"],
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-  weight: ["300", "400", "500"],
-});
-
-const cormorant = Cormorant_Garamond({
-  subsets: ["latin"],
-  variable: "--font-serif",
-  weight: ["300", "400", "600"],
+  variable: "--font-instrument",
+  weight: ["400"],
   style: ["normal", "italic"],
 });
 
+const interTight = Inter_Tight({
+  subsets: ["latin"],
+  variable: "--font-inter-tight",
+  weight: ["300", "400", "500"],
+});
+
+const plexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  variable: "--font-plex-mono",
+  weight: ["300", "400", "500"],
+});
+
 export const metadata: Metadata = {
-  title: "GRAVITY — Adaptive Intelligence Allocation Framework | MATRIX",
+  title: "GRAVITY Studio — Intelligence, assembled.",
   description:
-    "The enterprise intelligence operating system. Optimal Intelligence = f(Quality, Cost, Latency, Risk, Complexity).",
+    "A simple surface for creating, analyzing, and deciding. State an intent — GRAVITY assembles the right intelligence behind it.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${jetbrainsMono.variable} ${cormorant.variable}`}
+      className={`${instrument.variable} ${interTight.variable} ${plexMono.variable}`}
     >
       <body className="min-h-screen">
-        <AppShell>{children}</AppShell>
+        <StudioShell>{children}</StudioShell>
       </body>
     </html>
   );

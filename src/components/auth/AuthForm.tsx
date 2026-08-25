@@ -44,20 +44,21 @@ function AuthForm({ mode }: { mode: "login" | "signup" }) {
   };
 
   return (
-    <form onSubmit={submit} className="w-full max-w-[380px]">
+    <form onSubmit={submit} className="w-full max-w-[400px] border border-border bg-deep p-8 sm:p-10">
       <div className="mb-8 text-center">
         <div className="flex items-center justify-center gap-3 mb-3">
-          <span className="font-mono text-[10px] tracking-[0.2em] text-gold">MATRIX</span>
-          <span className="w-px h-4 bg-border" />
-          <span className="font-serif text-sm text-ivory italic">GRAVITY</span>
+          <span className="studio-mark">G</span>
+          <span className="studio-wordmark">
+            GRAVITY <span>/ STUDIO</span>
+          </span>
         </div>
-        <h1 className="font-serif text-3xl font-light text-ivory">
-          {mode === "login" ? "Sign in" : "Create account"}
+        <h1 className="font-serif text-4xl font-light text-ivory">
+          {mode === "login" ? "Welcome back." : "Begin here."}
         </h1>
-        <p className="kicker mt-2">
+        <p className="studio-muted mt-2">
           {mode === "login"
-            ? "Access your intelligence workspace"
-            : "Provision a new GRAVITY workspace"}
+            ? "Sign in to your intelligence workspace."
+            : "One account, one private workspace, zero setup."}
         </p>
       </div>
 
@@ -119,7 +120,7 @@ function AuthForm({ mode }: { mode: "login" | "signup" }) {
 
 export default function AuthPage({ mode }: { mode: "login" | "signup" }) {
   return (
-    <main className="min-h-screen grid-bg flex items-center justify-center p-6">
+    <main className="studio-auth-main">
       <AuthFormWrapper mode={mode} />
     </main>
   );
