@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     }
     const guard = await requireTenant();
     if (guard.error) return guard.error;
-    const body = (await request.json()) as { prompt?: string };
+    const body = (await request.json()) as { prompt?: string; csvData?: string; csvFileName?: string };
     const prompt = body.prompt?.trim();
     if (!prompt) {
       return NextResponse.json({ error: "prompt is required" }, { status: 400 });
@@ -46,6 +46,8 @@ export async function POST(request: Request) {
     const { mission, profile, routing } = await createMissionWithPlan(prompt, {
       tenantId: guard.ctx.tenantId,
       userId: guard.ctx.authUserId,
+      csvData: body.csvData,
+      csvFileName: body.csvFileName,
     });
 
     return NextResponse.json(

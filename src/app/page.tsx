@@ -55,11 +55,11 @@ interface MissionRow {
   createdAt: string;
 }
 
-async function startMission(prompt: string): Promise<string> {
+async function startMission(prompt: string, csvData?: string, csvFileName?: string): Promise<string> {
   const res = await fetch("/api/missions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, csvData, csvFileName }),
   });
   if (!res.ok) throw new Error(`Status ${res.status}`);
   const json = (await res.json()) as { missionId: string };
@@ -106,12 +106,12 @@ function HomeContent() {
     }
   }, [missionId]);
 
-  const submit = async (prompt: string) => {
+  const submit = async (prompt: string, csvData?: string, csvFileName?: string) => {
     setBusy(true);
     setSubmitError(null);
     setMissionId(null);
     try {
-      const id = await startMission(prompt);
+      const id = await startMission(prompt, csvData, csvFileName);
       setMissionId(id);
     } catch {
       setSubmitError(

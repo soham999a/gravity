@@ -10,6 +10,7 @@ import {
   evaluations,
 } from "@/lib/drizzle/schema";
 import { callLLM, isLLMConfigured } from "@/lib/gravity/llm";
+import { analyzeDataset, formatReportForLLM } from "@/lib/gravity/stats";
 import type { StrategyKind } from "@/lib/gravity/types";
 
 type Complexity = "low" | "medium" | "high" | "critical";
@@ -546,6 +547,24 @@ export async function failStaleMissions(): Promise<void> {
 // Main mission execution.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// CSV data marker — embedded in the prompt field by the client or upload API.
+// Format: [DATA:csv:filename.csv]\n...\n[/DATA]\n\n<user instruction>
+// ---------------------------------------------------------------------------
+
+const DATA_MARKER_RE = /\[DATA:csv(?::([^\]]*))?\]\n([\s\S]*?)\n\[\/DATA\]\n*/;
+const MAX_CSV_ROWS_FOR_LLM = 50; // send only first N rows as sample to LLM
+
+function extractCSVData(prompt: string): { csv: string; fileName: string; cleanPrompt: string } | null {
+  const match = prompt.match(DATA_MARKER_RE);
+  if (!match) return null;
+  return {
+    fileName: match[1] ?? "data.csv",
+    csv: match[2]!,
+    cleanPrompt: prompt.replace(DATA_MARKER_RE, "").trim(),
+  };
+}
+
 export async function executeMission(missionId: string): Promise<void> {
   const db = getDb();
   const deadlineAt = Date.now() + EXECUTION_DEADLINE_MS;
@@ -559,6 +578,9 @@ export async function executeMission(missionId: string): Promise<void> {
     .values({ missionId, status: "running" })
     .returning();
 
+  // Check if the prompt contains embedded CSV data
+  const csvPayload = extractCSVData(mission.prompt);
+
   try {
     const [decision] = await db
       .select()
@@ -568,7 +590,55 @@ export async function executeMission(missionId: string): Promise<void> {
 
     let finalOutput = "";
 
-    if (strategy === "deterministic") {
+    // ─── FILE-BACKED DATA ANALYSIS PATH ────────────────────────────
+    // When the user uploaded a CSV, we run the statistical engine locally
+    // (zero cost), then feed the report to Gemini Flash for synthesis.
+    if (csvPayload) {
+      // Step 1: Run statistical engine (FREE — pure computation)
+      const analysisReport = analyzeDataset(csvPayload.csv, csvPayload.cleanPrompt);
+      const reportText = formatReportForLLM(analysisReport, csvPayload.cleanPrompt);
+
+      const statNode = await executeNode({
+        runId: run.id,
+        name: "Statistical Engine",
+        type: "statistical",
+        stage: "L1 · Compute",
+        purpose: `Analyze ${csvPayload.fileName}: ${analysisReport.summary.rows} rows × ${analysisReport.summary.columns} columns — trend detection, anomaly scoring, correlation analysis`,
+        prompt: reportText.slice(0, 2000),
+        outputOverride: reportText,
+      });
+
+      // Step 2: LLM synthesis using the statistical report (Gemini Flash — FREE tier)
+      // Only call LLM if configured; otherwise return the raw stats.
+      if (isLLMConfigured()) {
+        const synthNode = await executeNode({
+          runId: run.id,
+          name: "Data Synthesis",
+          type: "small_llm",
+          stage: "L2 · Synthesis",
+          purpose: "Translate statistical findings into actionable management recommendations",
+          tier: "small",
+          system:
+            "You are a senior data analyst. You have been given a complete statistical analysis report " +
+            "computed by GRAVITY's statistical engine. Your job is to translate these findings into " +
+            "clear, actionable recommendations for management. Structure your response as:\n" +
+            "1. Executive Summary (2-3 sentences)\n" +
+            "2. Key Findings (numbered, with specific numbers from the report)\n" +
+            "3. Risk Assessment (based on anomalies and trends detected)\n" +
+            "4. Top Recommendations (ranked by expected impact, with evidence)\n" +
+            "Use the EXACT numbers from the statistical report. Never fabricate data. " +
+            "If the report shows a trend, cite the slope and R². If anomalies exist, cite the z-scores.",
+          prompt: reportText,
+          maxTokens: 1400,
+          deadlineAt,
+        });
+        finalOutput = synthNode.output;
+      } else {
+        finalOutput = reportText;
+      }
+
+    // ─── STANDARD TEXT PATHS (no CSV) ─────────────────────────────
+    } else if (strategy === "deterministic") {
       const artifact = deterministicArtifact(mission.prompt);
       const r = await executeNode({
         runId: run.id,
@@ -849,16 +919,32 @@ export async function executeMission(missionId: string): Promise<void> {
 
 export async function createMissionWithPlan(
   prompt: string,
-  ctx?: { tenantId?: string; userId?: string },
+  ctx?: { tenantId?: string; userId?: string; csvData?: string; csvFileName?: string },
 ) {
   const db = getDb();
+
+  // If CSV data is provided, embed it in the prompt using the data marker
+  // so executeMission can detect and process it.
+  let effectivePrompt = prompt;
+  if (ctx?.csvData) {
+    const marker = `[DATA:csv:${ctx.csvFileName ?? "data.csv"}]\n${ctx.csvData}\n[/DATA]\n\n`;
+    effectivePrompt = marker + prompt;
+  }
+
   // Smart profiling: LLM-refined when configured, heuristic otherwise.
-  const profile = await profileProblemSmart(prompt);
+  const profile = await profileProblemSmart(effectivePrompt);
+
+  // When CSV data is present, override the data type to structured/time_series
+  // and boost complexity since we know data analysis is involved.
+  if (ctx?.csvData) {
+    profile.dataType = "structured";
+    if (profile.complexity === "low") profile.complexity = "medium";
+  }
 
   const [mission] = await db
     .insert(missions)
     .values({
-      prompt,
+      prompt: effectivePrompt,
       status: "routing",
       dataType: profile.dataType,
       domain: profile.domain,

@@ -1186,6 +1186,57 @@
   background: var(--color-gold);
 }
 
+/* --- File upload in composer --- */
+.gravity-composer-dragover {
+  border-color: var(--color-gold) !important;
+  background: rgba(184, 150, 12, 0.04) !important;
+}
+.gravity-composer-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 12px;
+  color: var(--color-ivory-dim);
+}
+.gravity-composer-attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+.gravity-composer-attach:hover {
+  border-color: var(--color-gold);
+  color: var(--color-gold);
+}
+.gravity-composer-dragoverlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: rgba(10, 10, 10, 0.92);
+  border: 2px dashed var(--color-gold);
+}
+.gravity-composer {
+  position: relative;
+}
+.hidden {
+  display: none;
+}
+
 /* --- Sections / cards / quote --- */
 .studio-section {
   border-top: 1px solid var(--color-border);
