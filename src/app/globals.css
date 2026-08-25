@@ -1368,3 +1368,33 @@
   place-items: center;
   padding: 24px;
 }
+
+/* --- Utility links (detail page) --- */
+.studio-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  transition: 0.2s ease;
+}
+.studio-back-link:hover {
+  color: var(--color-gold);
+}
+.studio-danger-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-danger-text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  transition: 0.2s ease;
+}
+.studio-danger-link:hover {
+  color: var(--color-danger);
+}

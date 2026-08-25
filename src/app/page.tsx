@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { ArrowRight, ArrowUpRight, FileText } from "lucide-react";
 import { TaskComposer } from "@/components/studio/TaskComposer";
 import { MissionRun } from "@/components/studio/MissionRun";
@@ -53,9 +55,23 @@ interface MissionRow {
   createdAt: string;
 }
 
-export default function StudioHomePage() {
+async function startMission(prompt: string): Promise<string> {
+  const res = await fetch("/api/missions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!res.ok) throw new Error(`Status ${res.status}`);
+  const json = (await res.json()) as { missionId: string };
+  fetch(`/api/missions/${json.missionId}/execute`, { method: "POST" }).catch(() => {});
+  return json.missionId;
+}
+
+function HomeContent() {
+  const searchParams = useSearchParams();
   const [missionId, setMissionId] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [submitError, setSubmitError] = React.useState<string | null>(null);
   const [prefill, setPrefill] = React.useState("");
   const [recent, setRecent] = React.useState<MissionRow[]>([]);
   const runRef = React.useRef<HTMLDivElement>(null);
@@ -77,31 +93,63 @@ export default function StudioHomePage() {
   }, [loadRecent]);
 
   React.useEffect(() => {
-    if (runRef.current) {
+    if (searchParams.get("compose") === "1") {
+      requestAnimationFrame(() => {
+        composerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    }
+  }, [searchParams]);
+
+  React.useEffect(() => {
+    if (runRef.current && missionId) {
       runRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }, [missionId]);
 
   const submit = async (prompt: string) => {
     setBusy(true);
+    setSubmitError(null);
     setMissionId(null);
     try {
-      const res = await fetch("/api/missions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
-      });
-      if (!res.ok) throw new Error(`Status ${res.status}`);
-      const json = (await res.json()) as { missionId: string };
-      setMissionId(json.missionId);
-      fetch(`/api/missions/${json.missionId}/execute`, { method: "POST" }).catch(() => {});
+      const id = await startMission(prompt);
+      setMissionId(id);
     } catch {
+      setSubmitError(
+        "GRAVITY could not start the task. Check your connection and try again in a moment.",
+      );
+    } finally {
       setBusy(false);
     }
   };
 
+  const handleFollowUp = async (refinement: string) => {
+    if (!missionId) return;
+    // Seed the follow-up with the original task so the engine keeps context.
+    let original = "";
+    try {
+      const res = await fetch(`/api/missions/${missionId}`, { cache: "no-store" });
+      if (res.ok) original = ((await res.json()) as { mission: { prompt: string } }).mission.prompt;
+    } catch {
+      /* fall back to refinement only */
+    }
+    const prompt = original
+      ? `${original}\n\nFollow-up instruction: ${refinement}`
+      : `${refinement} (Follow-up to my previous GRAVITY task.)`;
+    const id = await startMission(prompt);
+    setMissionId(id);
+  };
+
+  const handleRetry = async () => {
+    if (!missionId) return;
+    await fetch(`/api/missions/${missionId}/execute`, { method: "POST" }).catch(() => {});
+  };
+
   const pickExample = (prompt: string) => {
-    setPrefill(prompt);
+    setPrefill(prompt === "" ? `example-${Date.now()}` : prompt);
+    setSubmitError(null);
+    if (prompt === "") {
+      setPrefill("");
+    }
     setMissionId(null);
     requestAnimationFrame(() => {
       composerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -124,8 +172,13 @@ export default function StudioHomePage() {
               tools.
             </p>
             <div ref={composerRef} className="mt-10 max-w-4xl">
-              <TaskComposer key={prefill} initialValue={prefill} busy={busy} onSubmit={submit} />
+              <TaskComposer key={prefill || "fresh"} initialValue={prefill} busy={busy} onSubmit={submit} />
             </div>
+            {submitError ? (
+              <p className="mt-3 border border-danger/30 bg-danger/5 px-4 py-2 text-xs text-[color:var(--color-danger-text)]">
+                {submitError}
+              </p>
+            ) : null}
             <div className="mt-4 flex items-center gap-3">
               <span className="status-dot" />
               <span className="studio-meta">
@@ -138,7 +191,13 @@ export default function StudioHomePage() {
       </section>
 
       <div ref={runRef}>
-        {missionId ? <MissionRun missionId={missionId} /> : null}
+        {missionId ? (
+          <MissionRun
+            missionId={missionId}
+            onFollowUp={handleFollowUp}
+            onRetry={handleRetry}
+          />
+        ) : null}
       </div>
 
       <section className="studio-section studio-contrast-band studio-bone-band">
@@ -238,5 +297,13 @@ export default function StudioHomePage() {
         </button>
       </section>
     </div>
+  );
+}
+
+export default function StudioHomePage() {
+  return (
+    <Suspense fallback={<div className="studio-page" />}>
+      <HomeContent />
+    </Suspense>
   );
 }
