@@ -364,6 +364,20 @@ function ResultSurface({
   copied: boolean;
   onCopy: () => void;
 }) {
+  // Try to parse structured output (images or website)
+  let parsedType: string | null = null;
+  let parsedData: { images?: { url: string; prompt: string; width: number; height: number }[]; html?: string; mainPrompt?: string } | null = null;
+
+  try {
+    const parsed = JSON.parse(output);
+    if (parsed && typeof parsed.type === "string") {
+      parsedType = parsed.type;
+      parsedData = parsed;
+    }
+  } catch {
+    // Not structured output — render as plain text
+  }
+
   return (
     <div className="studio-result-grid">
       <div className="studio-output-preview">
@@ -374,13 +388,19 @@ function ResultSurface({
           <span>GRAVITY / STUDIO</span>
         </div>
         <div style={{ paddingTop: 28 }}>
-          <p className="studio-output-text">{output}</p>
+          {parsedType === "images" && parsedData?.images ? (
+            <ImageResult images={parsedData.images} />
+          ) : parsedType === "website" && parsedData?.html ? (
+            <WebsiteResult html={parsedData.html} />
+          ) : (
+            <p className="studio-output-text">{output}</p>
+          )}
         </div>
         <span
           className="absolute right-4 bottom-3 font-mono text-gold uppercase"
           style={{ fontFamily: "var(--font-mono)", letterSpacing: "0.13em", fontSize: 8 }}
         >
-          RESULT / LIVE ENGINE
+          {parsedType === "images" ? "VISUAL / LIVE ENGINE" : parsedType === "website" ? "SITE / LIVE ENGINE" : "RESULT / LIVE ENGINE"}
         </span>
       </div>
       <div className="studio-result-copy">
@@ -389,7 +409,9 @@ function ResultSurface({
             <p className="studio-eyebrow">RESULT</p>
             <h3 className="studio-result-title mt-2">{titleFromPrompt(prompt)}</h3>
           </div>
-          <span className="studio-result-kind shrink-0">BRIEF</span>
+          <span className="studio-result-kind shrink-0">
+            {parsedType === "images" ? "VISUAL" : parsedType === "website" ? "WEBSITE" : "BRIEF"}
+          </span>
         </div>
 
         {dimensions.length > 0 ? (
@@ -428,9 +450,83 @@ function ResultSurface({
         <div className="mt-8 flex flex-wrap gap-2">
           <button type="button" className="studio-secondary-button" onClick={onCopy}>
             <Copy className="size-3.5" />
-            {copied ? "Copied" : "Copy result"}
+            {copied ? "Copied" : parsedType === "website" ? "Copy HTML" : "Copy result"}
           </button>
+          {parsedType === "images" && parsedData?.images ? (
+            <a
+              href={parsedData.images[0]!.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="studio-secondary-button"
+            >
+              Open full size
+            </a>
+          ) : null}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ImageResult({
+  images,
+}: {
+  images: { url: string; prompt: string; width: number; height: number }[];
+}) {
+  return (
+    <div className="studio-image-grid">
+      {images.map((img, i) => (
+        <a
+          key={i}
+          href={img.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="studio-image-card"
+        >
+          <img
+            src={img.url}
+            alt={img.prompt}
+            width={img.width}
+            height={img.height}
+            loading="lazy"
+          />
+          <div className="studio-image-overlay">
+            <span className="studio-image-label">
+              {img.width} x {img.height}
+            </span>
+          </div>
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function WebsiteResult({ html }: { html: string }) {
+  const [expanded, setExpanded] = React.useState(false);
+
+  return (
+    <div className="studio-website-container">
+      <div className="studio-website-preview">
+        <iframe
+          srcDoc={html}
+          title="Generated website"
+          sandbox="allow-scripts"
+          className="studio-website-iframe"
+        />
+      </div>
+      <div className="studio-website-actions">
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="studio-secondary-button"
+        >
+          {expanded ? "Hide source" : "View source code"}
+        </button>
+        {expanded ? (
+          <pre className="studio-code-block">
+            <code>{html}</code>
+          </pre>
+        ) : null}
       </div>
     </div>
   );

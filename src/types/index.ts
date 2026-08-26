@@ -5,6 +5,8 @@ export type StrategyKind =
   | "specialist_agent"
   | "advanced_reasoning"
   | "multi_agent"
+  | "image_generation"
+  | "website_builder"
   | "human";
 
 export type DataType =

@@ -11,6 +11,8 @@ import {
 } from "@/lib/drizzle/schema";
 import { callLLM, isLLMConfigured } from "@/lib/gravity/llm";
 import { analyzeDataset, formatReportForLLM } from "@/lib/gravity/stats";
+import { generateImage, generateImageVariations } from "@/lib/gravity/imagegen";
+import { generateWebsite } from "@/lib/gravity/sitegen";
 import type { StrategyKind } from "@/lib/gravity/types";
 
 type Complexity = "low" | "medium" | "high" | "critical";
@@ -36,6 +38,18 @@ const COMPLEX_WORDS = [
 const COMPUTATIONAL_RE =
   /\b(calculate|compute|optimi[sz]e|solve|schedule|allocate|minimi[sz]e|maximi[sz]e|route)\b/i;
 
+/** Detect image generation intent */
+const IMAGE_RE =
+  /\b(generate|create|make|draw|design|produce|build)\b.{0,30}\b(image|photo|picture|illustration|artwork|art|graphic|visual|logo|icon|banner|poster|wallpaper|render|scene|portrait|landscape|concept art|3d render)\b/i;
+
+/** Detect website generation intent */
+const WEBSITE_RE =
+  /\b(generate|create|make|build|design|code|develop|produce)\b.{0,30}\b(website|web page|landing page|webpage|site|homepage|portfolio|blog|dashboard|app|ui|interface|page)\b/i;
+
+/** Broader image keywords — user may say just "a cat in space" with image context */
+const IMAGE_KEYWORDS =
+  /\b(image|photo|picture|illustration|artwork|art|graphic|visual|logo|icon|banner|poster|wallpaper|render|scene|portrait|landscape|pixel|3d|2d|cartoon|anime|manga|sketch|painting|drawing)\b/i;
+
 const SCALE_RE = /\b\d+(?:\.\d+)?\s*(?:m|mm|k|b|million|billion|thousand|%|percent|x)\b|\b\d{2,}\b/gi;
 
 export interface ProfileResult {
@@ -45,6 +59,8 @@ export interface ProfileResult {
   signals: { name: string; value: number; unit?: string }[];
   dimensions: { name: string; score: number; maxScore: number }[];
   summary: string;
+  wantsImage?: boolean;
+  wantsWebsite?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +77,9 @@ export function profileProblem(prompt: string): ProfileResult {
   else if (/image|photo|video|visual/.test(lower)) dataType = "images";
   else if (/document|pdf|report|file/.test(lower)) dataType = "documents";
   else if (/ and |,|\+/.test(lower) && words.length > 14) dataType = "mixed";
+
+  const wantsImage = IMAGE_RE.test(prompt) || (IMAGE_KEYWORDS.test(lower) && words.length < 20);
+  const wantsWebsite = WEBSITE_RE.test(prompt);
 
   const complexHits = COMPLEX_WORDS.filter((w) =>
     new RegExp(`\\b${w.replace(/-/g, "[- ]?")}\\b`, "i").test(prompt),
@@ -100,6 +119,8 @@ export function profileProblem(prompt: string): ProfileResult {
       { name: "Data volume", score: /\d{2,}/.test(prompt) ? 4 : 2, maxScore: 5 },
     ],
     summary: `Domain: ${domain}. Data type: ${dataType}. Complexity: ${complexity} (${complexHits} reasoning markers, ${scaleHits} scale indicators, ${words.length} words).`,
+    wantsImage,
+    wantsWebsite,
   };
 }
 
@@ -193,6 +214,50 @@ export function routeStrategy(profile: ProfileResult): {
   const comp = profile.dimensions.find((d) => d.name === "Computational")!.score;
   const isTimeSeries = profile.dataType === "time_series";
   const wantsComputation = comp >= 4 || COMPUTATIONAL_RE.test(profile.summary);
+  const wantsImage = profile.wantsImage ?? false;
+  const wantsWebsite = profile.wantsWebsite ?? false;
+
+  // Image/website generation — these bypass the complexity ladder entirely
+  // and go straight to their dedicated generation paths.
+  if (wantsImage && !wantsWebsite) {
+    const imageCandidate: CandidateScore = {
+      strategy: "image_generation",
+      name: "Image Generation",
+      suitabilityScore: 95,
+      estimatedCost: 0,
+      estimatedLatencyMs: 8_000,
+      estimatedQuality: 0.9,
+      reasoning: "User wants a visual asset. Pollinations.ai (free, no key) generates high-quality images from text.",
+    };
+    return {
+      candidates: [imageCandidate],
+      selected: imageCandidate,
+      escalationLevel: 2,
+      voiScore: 0.9,
+      confidence: 0.95,
+      reasoning: `Image generation selected — the prompt is a creative visual request routed to Pollinations.ai (free tier, zero cost).`,
+    };
+  }
+
+  if (wantsWebsite && !wantsImage) {
+    const siteCandidate: CandidateScore = {
+      strategy: "website_builder",
+      name: "Website Builder",
+      suitabilityScore: 93,
+      estimatedCost: 0,
+      estimatedLatencyMs: 15_000,
+      estimatedQuality: 0.88,
+      reasoning: "User wants a web page. LLM generates complete HTML/CSS/JS, rendered in an iframe preview.",
+    };
+    return {
+      candidates: [siteCandidate],
+      selected: siteCandidate,
+      escalationLevel: 3,
+      voiScore: 0.88,
+      confidence: 0.93,
+      reasoning: `Website builder selected — the prompt requests a web page, routed to LLM code generation with iframe preview.`,
+    };
+  }
 
   // L0 only for explicitly computational asks at low complexity — otherwise
   // the ladder floor is L2 so every customer gets genuinely useful output.
@@ -269,6 +334,8 @@ export function routeStrategy(profile: ProfileResult): {
     specialist_agent: 3,
     advanced_reasoning: 4,
     multi_agent: 5,
+    image_generation: 2,
+    website_builder: 3,
     human_review: 6,
     human: 6,
   };
@@ -650,6 +717,118 @@ export async function executeMission(missionId: string): Promise<void> {
       }
 
     // ─── STANDARD TEXT PATHS (no CSV) ─────────────────────────────
+    } else if (strategy === "image_generation") {
+      // Generate images using Pollinations.ai (FREE — no API key)
+      const cleanPrompt = mission.prompt
+        .replace(/\[DATA:csv[^\]]*\][\s\S]*?\[\/DATA\]\n*/g, "")
+        .trim();
+
+      const genNode = await executeNode({
+        runId: run.id,
+        name: "Image Generation",
+        type: "image_generation",
+        stage: "L1 · Generate",
+        purpose: "Generate image(s) from text prompt via Pollinations.ai — free, zero cost",
+        prompt: cleanPrompt.slice(0, 500),
+      });
+
+      // Generate 2 variations for a richer result
+      const images = await generateImageVariations(cleanPrompt, 2);
+
+      if (images.length > 0) {
+        // Store image URLs as structured output
+        const imageOutput = images
+          .map((img, i) => `IMAGE_${i + 1}: ${img.url}`)
+          .join("\n");
+
+        await executeNode({
+          runId: run.id,
+          name: "Image Results",
+          type: "image_generation",
+          stage: "L1 · Output",
+          purpose: `${images.length} image(s) generated successfully`,
+          prompt: imageOutput,
+          outputOverride: JSON.stringify({
+            type: "images",
+            images: images.map((img) => ({
+              url: img.url,
+              prompt: img.prompt,
+              width: img.width,
+              height: img.height,
+            })),
+            mainPrompt: cleanPrompt,
+          }),
+        });
+
+        finalOutput = JSON.stringify({
+          type: "images",
+          images: images.map((img) => ({
+            url: img.url,
+            prompt: img.prompt,
+            width: img.width,
+            height: img.height,
+          })),
+          mainPrompt: cleanPrompt,
+        });
+      } else {
+        finalOutput = "Image generation failed — the service may be temporarily unavailable. Please try again.";
+      }
+
+    } else if (strategy === "website_builder") {
+      // Generate a complete website using LLM code generation
+      const cleanPrompt = mission.prompt
+        .replace(/\[DATA:csv[^\]]*\][\s\S]*?\[\/DATA\]\n*/g, "")
+        .trim();
+
+      const siteNode = await executeNode({
+        runId: run.id,
+        name: "Website Generation",
+        type: "website_builder",
+        stage: "L1 · Generate",
+        purpose: "Generate complete HTML/CSS/JS website from natural language prompt",
+        tier: "general",
+        system:
+          "You are a world-class frontend developer. You generate COMPLETE, production-ready HTML pages.\n" +
+          "RULES:\n" +
+          "1. Return ONLY the HTML code — no explanations, no markdown fences, no preamble.\n" +
+          "2. The HTML must be a single self-contained file with embedded CSS and JS.\n" +
+          "3. Use modern CSS (grid, flexbox, variables) — no external dependencies.\n" +
+          "4. Make it visually stunning — dark theme with #0a0a0a background, #e8e4dc ivory text, #b8960c gold accents.\n" +
+          "5. Include responsive design (mobile-friendly).\n" +
+          "6. Include smooth scroll behavior, hover effects, and micro-interactions.\n" +
+          "7. The page must look complete and professional — not a wireframe.\n" +
+          "8. Use semantic HTML5 elements with system-ui font stack.",
+        prompt: `Generate a complete, production-ready HTML page for:\n\n${cleanPrompt}`,
+        maxTokens: 4000,
+        deadlineAt,
+      });
+
+      // Clean up the HTML output
+      let html = siteNode.output
+        .replace(/```html\n?/gi, "")
+        .replace(/```\n?/gi, "")
+        .trim();
+
+      if (!html.toLowerCase().includes("<!doctype") && !html.toLowerCase().includes("<html")) {
+        html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Generated by GRAVITY</title>
+</head>
+<body>
+${html}
+</body>
+</html>`;
+      }
+
+      finalOutput = JSON.stringify({
+        type: "website",
+        html,
+        prompt: cleanPrompt,
+      });
+
     } else if (strategy === "deterministic") {
       const artifact = deterministicArtifact(mission.prompt);
       const r = await executeNode({
