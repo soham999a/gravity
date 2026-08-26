@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
-import AuthPage from "@/components/auth/AuthForm";
-
+import { Suspense } from "react";
+import { AuthForm } from "@/components/auth/AuthForm";
 
 export const metadata: Metadata = { title: "Sign in — GRAVITY" };
 
 export default function LoginPage() {
-  return <AuthPage mode="login" />;
+  return (
+    <Suspense>
+      <AuthForm mode="login" />
+    </Suspense>
+  );
 }

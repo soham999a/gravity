@@ -1,24 +1,20 @@
 import { NextResponse } from "next/server";
-import { requireTenant } from "@/lib/api-auth";
+import { verifyAuthToken } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
 /**
  * POST /api/upload — Accept CSV text, return an ID for the data.
- * For the demo, we store the CSV text in-memory (keyed by a random ID)
- * and the client passes it alongside the mission prompt.
- * 
- * In production this would be Supabase Storage or S3.
+ * Stores in-memory (keyed by random ID) for pipeline processing.
  */
 const store = new Map<string, { csv: string; name: string; uploadedAt: number }>();
 
-// Expose globally for the pipeline to read
 (globalThis as Record<string, unknown>).__csvStore = store;
 
 export async function POST(request: Request) {
   try {
-    const guard = await requireTenant();
-    if (guard.error) return guard.error;
+    const ctx = await verifyAuthToken(request as any);
+    if (!ctx) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
 
     const body = (await request.json()) as { csv?: string; fileName?: string };
     if (!body.csv || body.csv.length < 10) {
@@ -35,7 +31,6 @@ export async function POST(request: Request) {
       uploadedAt: Date.now(),
     });
 
-    // Cleanup entries older than 30 minutes
     const cutoff = Date.now() - 30 * 60_000;
     for (const [key, val] of store) {
       if (val.uploadedAt < cutoff) store.delete(key);
@@ -48,7 +43,6 @@ export async function POST(request: Request) {
   }
 }
 
-/** Retrieve uploaded CSV by ID. Returns null if not found or expired. */
 export function getUploadedCSV(id: string): { csv: string; name: string } | null {
   const entry = (globalThis as Record<string, unknown>).__csvStore as
     | Map<string, { csv: string; name: string; uploadedAt: number }>

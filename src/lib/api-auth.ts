@@ -1,26 +1,43 @@
-import { NextResponse } from "next/server";
-import { isDbConfigured } from "@/lib/db";
-import { getAuthContext, type AuthContext } from "@/lib/tenant";
+/**
+ * Server-side auth helper for API routes.
+ * Verifies the Firebase ID token and returns the user context.
+ */
 
-export type TenantGuard = { ctx: AuthContext; error?: undefined } | { ctx?: undefined; error: NextResponse };
+import { adminAuth, adminDb } from "./firebase-admin";
+import type { NextRequest } from "next/server";
+
+export interface AuthContext {
+  uid: string;
+  email: string;
+  name: string | null;
+  tenantId: string;
+}
 
 /**
- * Standard guard for tenant-scoped API routes. Returns either the
- * authenticated tenant context or a ready-to-return error response.
+ * Extract and verify the Firebase ID token from the request.
+ * Returns null if unauthenticated.
  */
-export async function requireTenant(): Promise<TenantGuard> {
-  if (!isDbConfigured) {
-    return {
-      error: NextResponse.json({ error: "Database not configured", live: false }, { status: 503 }),
-    };
-  }
+export async function verifyAuthToken(request: NextRequest): Promise<AuthContext | null> {
+  const idToken = request.cookies.get("fb-token")?.value;
+  if (!idToken) return null;
 
-  const ctx = await getAuthContext();
-  if (!ctx) {
-    return {
-      error: NextResponse.json({ error: "unauthenticated", live: false }, { status: 401 }),
-    };
-  }
+  try {
+    const decoded = await adminAuth.verifyIdToken(idToken);
+    const uid = decoded.uid;
+    const email = decoded.email ?? "";
 
-  return { ctx };
+    // Look up user in Firestore
+    const userDoc = await adminDb.collection("users").doc(uid).get();
+    if (!userDoc.exists) return null;
+    const userData = userDoc.data()!;
+
+    return {
+      uid,
+      email,
+      name: userData.name ?? null,
+      tenantId: userData.tenantId,
+    };
+  } catch {
+    return null;
+  }
 }

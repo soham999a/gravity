@@ -3,7 +3,8 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { onAuthStateChanged, signOut as firebaseSignOut } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 import { ArrowUpRight, LogOut, Menu, X } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -26,21 +27,20 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
   React.useEffect(() => setOpen(false), [pathname]);
 
   React.useEffect(() => {
-    createClient()
-      .auth.getUser()
-      .then(({ data }) => setUserEmail(data.user?.email ?? null))
-      .catch(() => setUserEmail(null));
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setUserEmail(user?.email ?? null);
+    });
+    return () => unsub();
   }, []);
 
   const signOut = async () => {
     try {
-      await fetch("/auth/signout", { method: "POST" });
+      await firebaseSignOut(auth);
+      document.cookie = "fb-token=; path=/; max-age=0";
     } catch {
       /* ignore */
     }
-    await createClient().auth.signOut();
     router.replace("/login");
-    router.refresh();
   };
 
   const initials = userEmail

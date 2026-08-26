@@ -1,14 +1,20 @@
-import { eq, and, inArray, lt } from "drizzle-orm";
-import { getDb, isDbConfigured } from "@/lib/db";
 import {
-  missions,
-  problemProfiles,
-  routingDecisions,
-  executionRuns,
-  executionNodes,
-  decisionLedger,
-  evaluations,
-} from "@/lib/drizzle/schema";
+  getMission,
+  updateMission,
+  createExecutionRun,
+  updateExecutionRun,
+  getRoutingDecision,
+  createExecutionNode,
+  updateExecutionNode,
+  getExecutionNodes,
+  getProblemProfile,
+  createEvaluation,
+  createDecisionLedgerEntry,
+  createMission,
+  updateMission as updateMissionDb,
+  createProblemProfile,
+  createRoutingDecision,
+} from "@/lib/db-firestore";
 import { callLLM, isLLMConfigured } from "@/lib/gravity/llm";
 import { analyzeDataset, formatReportForLLM } from "@/lib/gravity/stats";
 import { generateImageVariations } from "@/lib/gravity/imagegen";
@@ -128,11 +134,6 @@ interface SmartProfile extends ProfileResult {
   profilerUsedLlm: boolean;
 }
 
-/**
- * Refine the heuristic profile with an LLM classification pass. Falls back
- * silently to the heuristic result on any failure — profiling must never
- * block or break mission creation.
- */
 async function profileProblemSmart(prompt: string): Promise<SmartProfile> {
   const baseline = profileProblem(prompt);
   if (!isLLMConfigured()) return { ...baseline, profilerUsedLlm: false };
@@ -174,7 +175,6 @@ async function profileProblemSmart(prompt: string): Promise<SmartProfile> {
   }
 }
 
-/** Extract the first JSON object from model text, tolerating code fences. */
 function safeJson<T>(text: string): T | null {
   const cleaned = text.replace(/```(?:json)?/gi, "").trim();
   const start = cleaned.indexOf("{");
@@ -188,8 +188,7 @@ function safeJson<T>(text: string): T | null {
 }
 
 // ---------------------------------------------------------------------------
-// Intelligence routing — cheap rule core with honest Value-of-Intelligence
-// margins. The router itself must never be an expensive model call.
+// Intelligence routing
 // ---------------------------------------------------------------------------
 
 export interface CandidateScore {
@@ -217,8 +216,6 @@ export function routeStrategy(profile: ProfileResult): {
   const wantsImage = profile.wantsImage ?? false;
   const wantsWebsite = profile.wantsWebsite ?? false;
 
-  // Image/website generation — these bypass the complexity ladder entirely
-  // and go straight to their dedicated generation paths.
   if (wantsImage && !wantsWebsite) {
     const imageCandidate: CandidateScore = {
       strategy: "image_generation",
@@ -259,8 +256,6 @@ export function routeStrategy(profile: ProfileResult): {
     };
   }
 
-  // L0 only for explicitly computational asks at low complexity — otherwise
-  // the ladder floor is L2 so every customer gets genuinely useful output.
   const deterministicFit =
     c === "low" && wantsComputation ? 88 : wantsComputation ? 58 : 24;
 
@@ -371,25 +366,25 @@ async function executeNode(opts: {
   prompt: string;
    json?: boolean;
    maxTokens?: number;
-   /** Skip the retry when the mission is close to its wall-clock budget. */
    deadlineAt?: number;
-   /** Pre-computed local artifact — skips the LLM call entirely. */
    outputOverride?: string;
  }): Promise<{ output: string; nodeId: string; tokens: number; latencyMs: number }> {
-  const db = getDb();
-  const [node] = await db
-    .insert(executionNodes)
-    .values({
-      runId: opts.runId,
-      name: opts.name,
-      type: opts.type,
-      status: "running",
-      stage: opts.stage,
-      purpose: opts.purpose.slice(0, 300),
-      input: opts.prompt.slice(0, 400),
-      startTime: new Date(),
-    })
-    .returning();
+  const node = await createExecutionNode({
+    runId: opts.runId,
+    name: opts.name,
+    type: opts.type,
+    status: "running",
+    stage: opts.stage,
+    purpose: opts.purpose.slice(0, 300),
+    input: opts.prompt.slice(0, 400),
+    output: null,
+    tokens: 0,
+    latencyMs: 0,
+    cost: 0,
+    confidence: 0,
+    startTime: new Date().toISOString(),
+    endTime: null,
+  });
 
   try {
     if (opts.tier) {
@@ -401,34 +396,28 @@ async function executeNode(opts: {
         maxTokens: opts.maxTokens ?? 512,
         timeoutMs: 28_000,
       });
-      await db
-        .update(executionNodes)
-        .set({
-          status: "completed",
-          output: result.text.slice(0, 8_000),
-          tokens: result.tokens,
-          latencyMs: result.latencyMs,
-          cost: 0,
-          confidence: 0.85,
-          endTime: new Date(),
-        })
-        .where(eq(executionNodes.id, node.id));
+      await updateExecutionNode(node.id, {
+        status: "completed",
+        output: result.text.slice(0, 8_000),
+        tokens: result.tokens,
+        latencyMs: result.latencyMs,
+        cost: 0,
+        confidence: 0.85,
+        endTime: new Date().toISOString(),
+      });
       return { output: result.text, nodeId: node.id, tokens: result.tokens, latencyMs: result.latencyMs };
     }
 
     // Deterministic node — computed locally, genuinely no model call.
-    await db
-      .update(executionNodes)
-      .set({
-        status: "completed",
-        output: opts.outputOverride ?? opts.prompt.slice(0, 4_000),
-        tokens: 0,
-        latencyMs: 120,
-        cost: 0,
-        confidence: 1,
-        endTime: new Date(),
-      })
-      .where(eq(executionNodes.id, node.id));
+    await updateExecutionNode(node.id, {
+      status: "completed",
+      output: opts.outputOverride ?? opts.prompt.slice(0, 4_000),
+      tokens: 0,
+      latencyMs: 120,
+      cost: 0,
+      confidence: 1,
+      endTime: new Date().toISOString(),
+    });
     return { output: opts.outputOverride ?? opts.prompt, nodeId: node.id, tokens: 0, latencyMs: 120 };
   } catch (err) {
     const canRetry =
@@ -443,34 +432,31 @@ async function executeNode(opts: {
           maxTokens: opts.maxTokens ?? 512,
           timeoutMs: 22_000,
         });
-        await db
-          .update(executionNodes)
-          .set({
-            status: "completed",
-            output: result.text.slice(0, 8_000),
-            tokens: result.tokens,
-            latencyMs: result.latencyMs,
-            cost: 0,
-            confidence: 0.8,
-            endTime: new Date(),
-          })
-          .where(eq(executionNodes.id, node.id));
+        await updateExecutionNode(node.id, {
+          status: "completed",
+          output: result.text.slice(0, 8_000),
+          tokens: result.tokens,
+          latencyMs: result.latencyMs,
+          cost: 0,
+          confidence: 0.8,
+          endTime: new Date().toISOString(),
+        });
         return { output: result.text, nodeId: node.id, tokens: result.tokens, latencyMs: result.latencyMs };
       } catch {
         /* fall through to failure */
       }
     }
-    await db
-      .update(executionNodes)
-      .set({ status: "failed", output: String(err).slice(0, 2000), endTime: new Date() })
-      .where(eq(executionNodes.id, node.id));
+    await updateExecutionNode(node.id, {
+      status: "failed",
+      output: String(err).slice(0, 2000),
+      endTime: new Date().toISOString(),
+    });
     throw err;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Genuine local computation for L0/L1 nodes. No theatre: these produce real
-// derived artefacts from the prompt itself.
+// Genuine local computation for L0/L1 nodes.
 // ---------------------------------------------------------------------------
 
 function deterministicArtifact(prompt: string): string {
@@ -595,29 +581,27 @@ async function judgeOutput(missionPrompt: string, output: string): Promise<{ jud
 
 // ---------------------------------------------------------------------------
 // Stale-mission watchdog: recover missions whose serverless function died
-// mid-execution (deploy, cold start kill, crash).
 // ---------------------------------------------------------------------------
 
 export async function failStaleMissions(): Promise<void> {
-  if (!isDbConfigured) return;
-  const cutoff = new Date(Date.now() - 3 * 60_000);
-  const stale = await getDb()
-    .select({ id: missions.id })
-    .from(missions)
-    .where(and(inArray(missions.status, ["executing", "evaluating"]), lt(missions.createdAt, cutoff)));
+  // Firestore doesn't have a simple "lt" with "inArray" easily,
+  // so we query for active statuses and filter by time in JS.
+  const { adminDb } = await import("@/lib/firebase-admin");
+  const snap = await adminDb.collection("missions")
+    .where("status", "in", ["executing", "evaluating", "pending", "profiling", "routing"])
+    .get();
+  const cutoff = new Date(Date.now() - 3 * 60_000).toISOString();
+  const stale = snap.docs.filter((d) => d.data().createdAt < cutoff);
   if (stale.length === 0) return;
-  const ids = stale.map((s) => s.id);
-  await getDb().update(missions).set({ status: "failed", completedAt: new Date() }).where(inArray(missions.id, ids));
+  const batch = adminDb.batch();
+  for (const doc of stale) {
+    batch.update(doc.ref, { status: "failed", completedAt: new Date().toISOString() });
+  }
+  await batch.commit();
 }
 
 // ---------------------------------------------------------------------------
-// Main mission execution.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// CSV data marker — embedded in the prompt field by the client or upload API.
-// Format: [DATA:csv:filename.csv]\n...\n[/DATA]\n\n<user instruction>
-// Supports multiple markers for multi-file analysis.
+// CSV data marker support
 // ---------------------------------------------------------------------------
 
 function extractCSVData(prompt: string): { csv: string; fileName: string; cleanPrompt: string }[] {
@@ -633,40 +617,32 @@ function extractCSVData(prompt: string): { csv: string; fileName: string; cleanP
   return all;
 }
 
+// ---------------------------------------------------------------------------
+// Main mission execution.
+// ---------------------------------------------------------------------------
+
 export async function executeMission(missionId: string): Promise<void> {
-  const db = getDb();
   const deadlineAt = Date.now() + EXECUTION_DEADLINE_MS;
-  const [mission] = await db.select().from(missions).where(eq(missions.id, missionId));
+  const mission = await getMission(missionId);
   if (!mission) throw new Error("Mission not found");
 
-  await db.update(missions).set({ status: "executing" }).where(eq(missions.id, missionId));
+  await updateMission(missionId, { status: "executing" });
 
-  const [run] = await db
-    .insert(executionRuns)
-    .values({ missionId, status: "running" })
-    .returning();
+  const run = await createExecutionRun(missionId);
 
-  // Check if the prompt contains embedded CSV data (supports multiple files)
   const csvPayloads = extractCSVData(mission.prompt);
 
   try {
-    const [decision] = await db
-      .select()
-      .from(routingDecisions)
-      .where(eq(routingDecisions.missionId, missionId));
+    const decision = await getRoutingDecision(missionId);
     const strategy = (decision?.selectedStrategy ?? "small_llm") as StrategyKind;
 
     let finalOutput = "";
 
     // ─── FILE-BACKED DATA ANALYSIS PATH ────────────────────────────
-    // When the user uploaded one or more CSVs, we run the statistical
-    // engine locally on each file (zero cost), combine the reports,
-    // then feed everything to Gemini Flash for synthesis.
     if (csvPayloads.length > 0) {
       const userPrompt = csvPayloads[0]!.cleanPrompt;
       const allReports: string[] = [];
 
-      // Step 1: Run statistical engine on each file (FREE — pure computation)
       for (let i = 0; i < csvPayloads.length; i++) {
         const payload = csvPayloads[i]!;
         const analysisReport = analyzeDataset(payload.csv, userPrompt);
@@ -686,7 +662,6 @@ export async function executeMission(missionId: string): Promise<void> {
 
       const combinedReport = allReports.join("\n\n");
 
-      // Step 2: LLM synthesis using the combined reports (Gemini Flash — FREE tier)
       if (isLLMConfigured()) {
         const fileNames = csvPayloads.map((p) => p.fileName).join(", ");
         const synthNode = await executeNode({
@@ -718,8 +693,6 @@ export async function executeMission(missionId: string): Promise<void> {
 
     // ─── STANDARD TEXT PATHS (no CSV) ─────────────────────────────
     } else if (strategy === "image_generation") {
-      // Generate images using Pollinations.ai (FREE — no API key, no network call needed)
-      // URLs are deterministic — the browser fetches the image directly.
       const cleanPrompt = mission.prompt
         .replace(/\[DATA:csv[^\]]*\][\s\S]*?\[\/DATA\]\n*/g, "")
         .trim();
@@ -756,7 +729,6 @@ export async function executeMission(missionId: string): Promise<void> {
         mainPrompt: cleanPrompt,
       });
 
-      // Store the structured JSON as the last node so MissionRun can parse it
       await executeNode({
         runId: run.id,
         name: "Image Result",
@@ -768,14 +740,12 @@ export async function executeMission(missionId: string): Promise<void> {
       });
 
     } else if (strategy === "website_builder") {
-      // Generate a complete website using LLM code generation
       const cleanPrompt = mission.prompt
         .replace(/\[DATA:csv[^\]]*\][\s\S]*?\[\/DATA\]\n*/g, "")
         .trim();
 
       const siteResult = await generateWebsite(cleanPrompt, { maxTokens: 4500 });
 
-      // Log the generation in the audit trail
       await executeNode({
         runId: run.id,
         name: "Website Generation",
@@ -792,7 +762,6 @@ export async function executeMission(missionId: string): Promise<void> {
         prompt: cleanPrompt,
       });
 
-      // Store the structured JSON as a node so MissionRun can parse it
       await executeNode({
         runId: run.id,
         name: "Website Result",
@@ -902,7 +871,6 @@ export async function executeMission(missionId: string): Promise<void> {
         ];
       }
 
-      // Specialists run in parallel — ~3× faster wall-clock, same quality.
       const specBudget = Math.max(1100, Math.min(1500, 1500));
       const specialistResults = await Promise.all(
         aspects.map((aspect) =>
@@ -927,8 +895,6 @@ export async function executeMission(missionId: string): Promise<void> {
         (aspect, i) => `## ${aspect.title}\n${specialistResults[i]!.output}`,
       );
 
-      // Skip the critic when the wall-clock budget is nearly spent —
-      // synthesiser output matters more than critique coverage.
       const skipCritic = Date.now() > deadlineAt - 16_000;
       let critiqueOutput = "";
       if (!skipCritic) {
@@ -965,28 +931,22 @@ export async function executeMission(missionId: string): Promise<void> {
     }
 
     // aggregate run totals from nodes
-    const nodes = await db.select().from(executionNodes).where(eq(executionNodes.runId, run.id));
+    const nodes = await getExecutionNodes(run.id);
     const totalTokens = nodes.reduce((s, n) => s + (n.tokens ?? 0), 0);
     const totalLatencyMs = nodes.reduce((s, n) => s + (n.latencyMs ?? 0), 0);
     const llmCalls = nodes.filter((n) => (n.tokens ?? 0) > 0).length;
 
-    await db
-      .update(executionRuns)
-      .set({
-        status: "completed",
-        totalCost: 0,
-        totalTokens,
-        totalLatencyMs,
-        completedAt: new Date(),
-      })
-      .where(eq(executionRuns.id, run.id));
+    await updateExecutionRun(run.id, {
+      status: "completed",
+      totalCost: 0,
+      totalTokens,
+      totalLatencyMs,
+      completedAt: new Date().toISOString(),
+    });
 
     // ---- evaluate: LLM-as-judge with heuristic fallback ---------------
-    await db.update(missions).set({ status: "evaluating" }).where(eq(missions.id, missionId));
-    const [profileRow] = await db
-      .select()
-      .from(problemProfiles)
-      .where(eq(problemProfiles.missionId, missionId));
+    await updateMission(missionId, { status: "evaluating" });
+    const profileRow = await getProblemProfile(missionId);
 
     const { judge, usedLlm } = await judgeOutput(mission.prompt, finalOutput);
     const wordCount = finalOutput.split(/\s+/).length;
@@ -1022,7 +982,7 @@ export async function executeMission(missionId: string): Promise<void> {
       feedback = `${llmCalls} LLM call(s), ${totalTokens} tokens, $0.00 spend. Heuristic evaluation (judge unavailable).`;
     }
 
-    await db.insert(evaluations).values({
+    await createEvaluation({
       missionId,
       dimensions: dimensionScores,
       qualityScore: Number(qualityScore.toFixed(2)),
@@ -1031,18 +991,18 @@ export async function executeMission(missionId: string): Promise<void> {
       feedback: feedback.slice(0, 1000),
     });
 
-    const runnerUpName =
-      (decision?.candidates ?? [])
-        .filter((cd) => cd.strategy !== strategy)
-        .sort((a, b) => b.suitabilityScore - a.suitabilityScore)[0]?.name ?? "n/a";
+    const runnerUpCandidates = (decision?.candidates ?? [])
+      .filter((cd: any) => cd.strategy !== strategy)
+      .sort((a: any, b: any) => b.suitabilityScore - a.suitabilityScore);
+    const runnerUpName = (runnerUpCandidates[0] as any)?.name ?? "n/a";
 
-    await db.insert(decisionLedger).values({
+    await createDecisionLedgerEntry({
       tenantId: mission.tenantId,
       missionId,
       task: mission.prompt.slice(0, 300),
       dataProfile: `${mission.domain ?? "general"} · ${mission.dataType ?? "text"}`,
       complexity: profileRow?.complexity ?? "medium",
-      candidates: (decision?.candidates ?? []).map((cd) => ({
+      candidates: (decision?.candidates ?? []).map((cd: any) => ({
         name: cd.name,
         score: cd.suitabilityScore,
         selected: cd.strategy === decision?.selectedStrategy,
@@ -1059,25 +1019,25 @@ export async function executeMission(missionId: string): Promise<void> {
       outcome: "success",
     });
 
-    await db
-      .update(missions)
-      .set({
-        status: "completed",
-        completedAt: new Date(),
-        selectedStrategy: strategy,
-        escalationLevel: decision?.escalationLevel ?? null,
-        confidence: decision?.confidence ?? null,
-        totalCost: 0,
-        totalTokens,
-        totalLatencyMs,
-      })
-      .where(eq(missions.id, missionId));
+    await updateMission(missionId, {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      selectedStrategy: strategy,
+      escalationLevel: decision?.escalationLevel ?? null,
+      confidence: decision?.confidence ?? null,
+      totalCost: 0,
+      totalTokens,
+      totalLatencyMs,
+    });
   } catch (err) {
-    await db
-      .update(executionRuns)
-      .set({ status: "failed", completedAt: new Date() })
-      .where(eq(executionRuns.id, run.id));
-    await db.update(missions).set({ status: "failed", completedAt: new Date() }).where(eq(missions.id, missionId));
+    await updateExecutionRun(run.id, {
+      status: "failed",
+      completedAt: new Date().toISOString(),
+    });
+    await updateMission(missionId, {
+      status: "failed",
+      completedAt: new Date().toISOString(),
+    });
     throw err;
   }
 }
@@ -1086,10 +1046,7 @@ export async function createMissionWithPlan(
   prompt: string,
   ctx?: { tenantId?: string; userId?: string; files?: { data: string; name: string }[] },
 ) {
-  const db = getDb();
-
   // If files are provided, embed them in the prompt using the data marker
-  // so executeMission can detect and process them.
   let effectivePrompt = prompt;
   if (ctx?.files && ctx.files.length > 0) {
     const markers = ctx.files.map(
@@ -1098,29 +1055,30 @@ export async function createMissionWithPlan(
     effectivePrompt = markers.join("\n\n") + "\n\n" + prompt;
   }
 
-  // Smart profiling: LLM-refined when configured, heuristic otherwise.
   const profile = await profileProblemSmart(effectivePrompt);
 
-  // When CSV data is present, override the data type to structured/time_series
-  // and boost complexity since we know data analysis is involved.
   if (ctx?.files && ctx.files.length > 0) {
     profile.dataType = "structured";
     if (profile.complexity === "low") profile.complexity = "medium";
   }
 
-  const [mission] = await db
-    .insert(missions)
-    .values({
-      prompt: effectivePrompt,
-      status: "routing",
-      dataType: profile.dataType,
-      domain: profile.domain,
-      tenantId: ctx?.tenantId ?? null,
-      userId: ctx?.userId ?? null,
-    })
-    .returning();
+  const mission = await createMission({
+    prompt: effectivePrompt,
+    status: "routing",
+    dataType: profile.dataType,
+    domain: profile.domain,
+    tenantId: ctx?.tenantId ?? "",
+    userId: ctx?.userId ?? "",
+    selectedStrategy: null,
+    escalationLevel: null,
+    confidence: null,
+    totalCost: null,
+    totalTokens: null,
+    totalLatencyMs: null,
+    completedAt: null,
+  });
 
-  await db.insert(problemProfiles).values({
+  await createProblemProfile({
     missionId: mission.id,
     dataType: profile.dataType,
     complexity: profile.complexity,
@@ -1130,7 +1088,7 @@ export async function createMissionWithPlan(
   });
 
   const routing = routeStrategy(profile);
-  await db.insert(routingDecisions).values({
+  await createRoutingDecision({
     missionId: mission.id,
     candidates: routing.candidates.map((cd) => ({
       strategy: cd.strategy,
@@ -1148,7 +1106,7 @@ export async function createMissionWithPlan(
     reasoning: routing.reasoning,
   });
 
-  await db.update(missions).set({ status: "pending" }).where(eq(missions.id, mission.id));
+  await updateMission(mission.id, { status: "pending" });
 
   return { mission, profile, routing };
 }

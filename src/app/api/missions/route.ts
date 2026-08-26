@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
-import { desc, eq } from "drizzle-orm";
-import { getDb, isDbConfigured } from "@/lib/db";
-import { missions } from "@/lib/drizzle/schema";
+import { verifyAuthToken } from "@/lib/api-auth";
+import { createMission, listMissions } from "@/lib/db-firestore";
 import { createMissionWithPlan } from "@/lib/gravity/pipeline";
-import { requireTenant } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -12,19 +10,13 @@ interface CsvFile {
   name: string;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    if (!isDbConfigured) {
-      return NextResponse.json({ error: "database not configured" }, { status: 503 });
+    const ctx = await verifyAuthToken(request as any);
+    if (!ctx) {
+      return NextResponse.json({ error: "unauthenticated", live: false }, { status: 401 });
     }
-    const guard = await requireTenant();
-    if (guard.error) return guard.error;
-    const rows = await getDb()
-      .select()
-      .from(missions)
-      .where(eq(missions.tenantId, guard.ctx.tenantId))
-      .orderBy(desc(missions.createdAt))
-      .limit(50);
+    const rows = await listMissions(ctx.tenantId);
     return NextResponse.json({ missions: rows, live: true });
   } catch (err) {
     console.error("[api/missions] GET error:", err);
@@ -34,11 +26,11 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    if (!isDbConfigured) {
-      return NextResponse.json({ error: "database not configured" }, { status: 503 });
+    const ctx = await verifyAuthToken(request as any);
+    if (!ctx) {
+      return NextResponse.json({ error: "unauthenticated", live: false }, { status: 401 });
     }
-    const guard = await requireTenant();
-    if (guard.error) return guard.error;
+
     const body = (await request.json()) as { prompt?: string; files?: CsvFile[] };
     const prompt = body.prompt?.trim();
     if (!prompt) {
@@ -49,8 +41,8 @@ export async function POST(request: Request) {
     }
 
     const { mission, profile, routing } = await createMissionWithPlan(prompt, {
-      tenantId: guard.ctx.tenantId,
-      userId: guard.ctx.authUserId,
+      tenantId: ctx.tenantId,
+      userId: ctx.uid,
       files: body.files,
     });
 
