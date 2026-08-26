@@ -10,6 +10,8 @@ export async function middleware(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
+  console.log("[middleware]", pathname, "env:", supabaseUrl ? "SET" : "MISSING", supabaseKey ? "KEY_SET" : "KEY_MISSING");
+
   // Env vars missing (e.g. not yet set on Vercel): degrade gracefully instead
   // of crashing — public paths work, pages get sent to login, APIs report 503.
   if (!supabaseUrl || !supabaseKey) {
@@ -30,6 +32,10 @@ export async function middleware(request: NextRequest) {
   const response = NextResponse.next({ request });
 
   try {
+    const cookieCount = request.cookies.getAll().length;
+    const cookieNames = request.cookies.getAll().map(c => c.name).filter(n => n.startsWith('sb-'));
+    console.log("[middleware]", pathname, "cookies:", cookieCount, "sb-cookies:", cookieNames.length, cookieNames);
+
     const supabase = createServerClient(supabaseUrl, supabaseKey, {
       cookies: {
         getAll() {
