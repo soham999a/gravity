@@ -11,7 +11,7 @@ import {
 } from "@/lib/drizzle/schema";
 import { callLLM, isLLMConfigured } from "@/lib/gravity/llm";
 import { analyzeDataset, formatReportForLLM } from "@/lib/gravity/stats";
-import { generateImage, generateImageVariations } from "@/lib/gravity/imagegen";
+import { generateImageVariations } from "@/lib/gravity/imagegen";
 import { generateWebsite } from "@/lib/gravity/sitegen";
 import type { StrategyKind } from "@/lib/gravity/types";
 
@@ -718,49 +718,22 @@ export async function executeMission(missionId: string): Promise<void> {
 
     // ─── STANDARD TEXT PATHS (no CSV) ─────────────────────────────
     } else if (strategy === "image_generation") {
-      // Generate images using Pollinations.ai (FREE — no API key)
+      // Generate images using Pollinations.ai (FREE — no API key, no network call needed)
+      // URLs are deterministic — the browser fetches the image directly.
       const cleanPrompt = mission.prompt
         .replace(/\[DATA:csv[^\]]*\][\s\S]*?\[\/DATA\]\n*/g, "")
         .trim();
 
-      const genNode = await executeNode({
+      const images = generateImageVariations(cleanPrompt, 2);
+
+      await executeNode({
         runId: run.id,
         name: "Image Generation",
         type: "image_generation",
         stage: "L1 · Generate",
-        purpose: "Generate image(s) from text prompt via Pollinations.ai — free, zero cost",
+        purpose: `Generate ${images.length} image(s) from: "${cleanPrompt.slice(0, 80)}"`,
         prompt: cleanPrompt.slice(0, 500),
-      });
-
-      // Generate 2 variations for a richer result
-      const images = await generateImageVariations(cleanPrompt, 2);
-
-      if (images.length > 0) {
-        // Store image URLs as structured output
-        const imageOutput = images
-          .map((img, i) => `IMAGE_${i + 1}: ${img.url}`)
-          .join("\n");
-
-        await executeNode({
-          runId: run.id,
-          name: "Image Results",
-          type: "image_generation",
-          stage: "L1 · Output",
-          purpose: `${images.length} image(s) generated successfully`,
-          prompt: imageOutput,
-          outputOverride: JSON.stringify({
-            type: "images",
-            images: images.map((img) => ({
-              url: img.url,
-              prompt: img.prompt,
-              width: img.width,
-              height: img.height,
-            })),
-            mainPrompt: cleanPrompt,
-          }),
-        });
-
-        finalOutput = JSON.stringify({
+        outputOverride: JSON.stringify({
           type: "images",
           images: images.map((img) => ({
             url: img.url,
@@ -769,10 +742,19 @@ export async function executeMission(missionId: string): Promise<void> {
             height: img.height,
           })),
           mainPrompt: cleanPrompt,
-        });
-      } else {
-        finalOutput = "Image generation failed — the service may be temporarily unavailable. Please try again.";
-      }
+        }),
+      });
+
+      finalOutput = JSON.stringify({
+        type: "images",
+        images: images.map((img) => ({
+          url: img.url,
+          prompt: img.prompt,
+          width: img.width,
+          height: img.height,
+        })),
+        mainPrompt: cleanPrompt,
+      });
 
     } else if (strategy === "website_builder") {
       // Generate a complete website using LLM code generation
@@ -780,52 +762,22 @@ export async function executeMission(missionId: string): Promise<void> {
         .replace(/\[DATA:csv[^\]]*\][\s\S]*?\[\/DATA\]\n*/g, "")
         .trim();
 
-      const siteNode = await executeNode({
+      const siteNode = await generateWebsite(cleanPrompt, { maxTokens: 4500 });
+
+      // Also log it as an execution node for the audit trail
+      await executeNode({
         runId: run.id,
         name: "Website Generation",
         type: "website_builder",
         stage: "L1 · Generate",
-        purpose: "Generate complete HTML/CSS/JS website from natural language prompt",
-        tier: "general",
-        system:
-          "You are a world-class frontend developer. You generate COMPLETE, production-ready HTML pages.\n" +
-          "RULES:\n" +
-          "1. Return ONLY the HTML code — no explanations, no markdown fences, no preamble.\n" +
-          "2. The HTML must be a single self-contained file with embedded CSS and JS.\n" +
-          "3. Use modern CSS (grid, flexbox, variables) — no external dependencies.\n" +
-          "4. Make it visually stunning — dark theme with #0a0a0a background, #e8e4dc ivory text, #b8960c gold accents.\n" +
-          "5. Include responsive design (mobile-friendly).\n" +
-          "6. Include smooth scroll behavior, hover effects, and micro-interactions.\n" +
-          "7. The page must look complete and professional — not a wireframe.\n" +
-          "8. Use semantic HTML5 elements with system-ui font stack.",
-        prompt: `Generate a complete, production-ready HTML page for:\n\n${cleanPrompt}`,
-        maxTokens: 4000,
-        deadlineAt,
+        purpose: `Generate complete HTML/CSS/JS website from: "${cleanPrompt.slice(0, 80)}"`,
+        prompt: cleanPrompt.slice(0, 500),
+        outputOverride: siteNode.html.slice(0, 4000),
       });
-
-      // Clean up the HTML output
-      let html = siteNode.output
-        .replace(/```html\n?/gi, "")
-        .replace(/```\n?/gi, "")
-        .trim();
-
-      if (!html.toLowerCase().includes("<!doctype") && !html.toLowerCase().includes("<html")) {
-        html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Generated by GRAVITY</title>
-</head>
-<body>
-${html}
-</body>
-</html>`;
-      }
 
       finalOutput = JSON.stringify({
         type: "website",
-        html,
+        html: siteNode.html,
         prompt: cleanPrompt,
       });
 

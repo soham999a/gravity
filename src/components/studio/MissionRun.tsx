@@ -476,26 +476,36 @@ function ImageResult({
   return (
     <div className="studio-image-grid">
       {images.map((img, i) => (
-        <a
-          key={i}
-          href={img.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="studio-image-card"
-        >
+        <div key={i} className="studio-image-card">
           <img
             src={img.url}
             alt={img.prompt}
             width={img.width}
             height={img.height}
             loading="lazy"
+            crossOrigin="anonymous"
+            onError={(e) => {
+              // Show a placeholder on error
+              const target = e.target as HTMLImageElement;
+              target.style.minHeight = "200px";
+              target.style.background = "#141210";
+              target.alt = "Image generation pending — click to open in new tab";
+            }}
           />
           <div className="studio-image-overlay">
             <span className="studio-image-label">
               {img.width} x {img.height}
             </span>
           </div>
-        </a>
+          <a
+            href={img.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="studio-image-open-link"
+          >
+            Open full size
+          </a>
+        </div>
       ))}
     </div>
   );
@@ -503,25 +513,87 @@ function ImageResult({
 
 function WebsiteResult({ html }: { html: string }) {
   const [expanded, setExpanded] = React.useState(false);
+  const iframeRef = React.useRef<HTMLIFrameElement>(null);
+
+  // Auto-resize iframe to content height
+  React.useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    const handleLoad = () => {
+      try {
+        const doc = iframe.contentDocument;
+        if (doc && doc.body) {
+          const height = Math.min(doc.body.scrollHeight + 20, 700);
+          iframe.style.height = `${height}px`;
+        }
+      } catch {
+        // Cross-origin — use default height
+      }
+    };
+
+    iframe.addEventListener("load", handleLoad);
+    return () => iframe.removeEventListener("load", handleLoad);
+  }, [html]);
 
   return (
     <div className="studio-website-container">
+      <div className="studio-website-chrome">
+        <div className="studio-chrome-dots">
+          <span className="chrome-dot" style={{ background: "#ff5f57" }} />
+          <span className="chrome-dot" style={{ background: "#ffbd2e" }} />
+          <span className="chrome-dot" style={{ background: "#28c840" }} />
+        </div>
+        <div className="studio-chrome-url">gravity.studio/generated</div>
+      </div>
       <div className="studio-website-preview">
         <iframe
+          ref={iframeRef}
           srcDoc={html}
           title="Generated website"
-          sandbox="allow-scripts"
+          sandbox="allow-scripts allow-modals"
           className="studio-website-iframe"
+          style={{ height: "500px" }}
         />
       </div>
       <div className="studio-website-actions">
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          className="studio-secondary-button"
-        >
-          {expanded ? "Hide source" : "View source code"}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="studio-secondary-button"
+          >
+            {expanded ? "Hide source" : "View source code"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const blob = new Blob([html], { type: "text/html" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "gravity-generated.html";
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            className="studio-secondary-button"
+          >
+            Download HTML
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const w = window.open("", "_blank");
+              if (w) {
+                w.document.write(html);
+                w.document.close();
+              }
+            }}
+            className="studio-secondary-button"
+          >
+            Open in new tab
+          </button>
+        </div>
         {expanded ? (
           <pre className="studio-code-block">
             <code>{html}</code>
