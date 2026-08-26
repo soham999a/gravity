@@ -756,15 +756,26 @@ export async function executeMission(missionId: string): Promise<void> {
         mainPrompt: cleanPrompt,
       });
 
+      // Store the structured JSON as the last node so MissionRun can parse it
+      await executeNode({
+        runId: run.id,
+        name: "Image Result",
+        type: "image_generation",
+        stage: "L2 · Output",
+        purpose: `${images.length} image(s) ready for display`,
+        prompt: "Image output ready",
+        outputOverride: finalOutput,
+      });
+
     } else if (strategy === "website_builder") {
       // Generate a complete website using LLM code generation
       const cleanPrompt = mission.prompt
         .replace(/\[DATA:csv[^\]]*\][\s\S]*?\[\/DATA\]\n*/g, "")
         .trim();
 
-      const siteNode = await generateWebsite(cleanPrompt, { maxTokens: 4500 });
+      const siteResult = await generateWebsite(cleanPrompt, { maxTokens: 4500 });
 
-      // Also log it as an execution node for the audit trail
+      // Log the generation in the audit trail
       await executeNode({
         runId: run.id,
         name: "Website Generation",
@@ -772,13 +783,24 @@ export async function executeMission(missionId: string): Promise<void> {
         stage: "L1 · Generate",
         purpose: `Generate complete HTML/CSS/JS website from: "${cleanPrompt.slice(0, 80)}"`,
         prompt: cleanPrompt.slice(0, 500),
-        outputOverride: siteNode.html.slice(0, 4000),
+        outputOverride: `Generated ${siteResult.html.length} characters of HTML`,
       });
 
       finalOutput = JSON.stringify({
         type: "website",
-        html: siteNode.html,
+        html: siteResult.html,
         prompt: cleanPrompt,
+      });
+
+      // Store the structured JSON as a node so MissionRun can parse it
+      await executeNode({
+        runId: run.id,
+        name: "Website Result",
+        type: "website_builder",
+        stage: "L2 · Output",
+        purpose: "Renderable website preview",
+        prompt: "Website output ready",
+        outputOverride: finalOutput,
       });
 
     } else if (strategy === "deterministic") {

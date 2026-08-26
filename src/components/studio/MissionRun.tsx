@@ -178,6 +178,16 @@ export function MissionRun({
   const activeIndex = STATUS_INDEX[mission.status] ?? 0;
 
   const synthesisNode =
+    [...nodes].reverse().find((n) => {
+      if (n.status !== "completed" || !n.output) return false;
+      // Prefer nodes whose output looks like structured JSON
+      try {
+        const parsed = JSON.parse(n.output);
+        return parsed && (parsed.type === "images" || parsed.type === "website");
+      } catch {
+        return false;
+      }
+    }) ??
     [...nodes].reverse().find((n) => n.status === "completed" && (n.tokens ?? 0) > 0) ??
     [...nodes].reverse().find((n) => n.output);
 
@@ -477,21 +487,13 @@ function ImageResult({
     <div className="studio-image-grid">
       {images.map((img, i) => (
         <div key={i} className="studio-image-card">
-          <img
-            src={img.url}
-            alt={img.prompt}
-            width={img.width}
-            height={img.height}
-            loading="lazy"
-            crossOrigin="anonymous"
-            onError={(e) => {
-              // Show a placeholder on error
-              const target = e.target as HTMLImageElement;
-              target.style.minHeight = "200px";
-              target.style.background = "#141210";
-              target.alt = "Image generation pending — click to open in new tab";
-            }}
-          />
+          <a href={img.url} target="_blank" rel="noopener noreferrer">
+            <img
+              src={img.url}
+              alt={img.prompt}
+              loading="lazy"
+            />
+          </a>
           <div className="studio-image-overlay">
             <span className="studio-image-label">
               {img.width} x {img.height}
