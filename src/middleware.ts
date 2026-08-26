@@ -2,13 +2,13 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/login", "/signup", "/auth", "/api/health"];
 
-export async function middleware(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
-  const firebaseApiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+  const hasFirebaseConfig = Boolean(process.env.NEXT_PUBLIC_FIREBASE_API_KEY);
 
-  if (!firebaseApiKey) {
+  if (!hasFirebaseConfig) {
     console.error("[middleware] Missing NEXT_PUBLIC_FIREBASE_API_KEY");
     if (isPublic) return NextResponse.next();
     if (pathname.startsWith("/api/")) {
@@ -20,33 +20,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Read the Firebase ID token from cookie (set by client after signIn)
+  // Check if the Firebase ID token cookie exists (set by client after signIn)
   const idToken = request.cookies.get("fb-token")?.value;
-
-  let isAuthenticated = false;
-
-  if (idToken) {
-    try {
-      // Verify the token using Firebase Auth REST API (no admin SDK needed in edge)
-      const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-      const res = await fetch(
-        `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseApiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ idToken }),
-        },
-      );
-      if (res.ok) {
-        const data = await res.json();
-        if (data.users && data.users.length > 0) {
-          isAuthenticated = true;
-        }
-      }
-    } catch {
-      // Token invalid or expired
-    }
-  }
+  const isAuthenticated = Boolean(idToken && idToken.length > 10);
 
   // Redirect authenticated users away from login/signup
   if (isAuthenticated && (pathname === "/login" || pathname === "/signup")) {
@@ -55,7 +31,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Block unauthenticated users
+  // Block unauthenticated users from protected pages
   if (!isAuthenticated && !isPublic) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "unauthenticated", live: false }, { status: 401 });
