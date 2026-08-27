@@ -19,6 +19,7 @@ import type { CsvFile } from "@/components/studio/TaskComposer";
 import { MissionRun } from "@/components/studio/MissionRun";
 import { RightSideVisualField } from "@/components/gravity/RightSideVisualField";
 import { useGravityUser } from "@/lib/gravity-user";
+import { useMissionFeed } from "@/lib/gravity-missions";
 import { num } from "@/lib/utils";
 
 const FREE_LIMIT = 250_000;
@@ -62,15 +63,6 @@ const CATEGORIES = [
   },
 ];
 
-interface MissionRow {
-  id: string;
-  prompt: string;
-  status: string;
-  totalTokens: number | null;
-  totalLatencyMs: number | null;
-  createdAt: string;
-}
-
 function greeting(): string {
   const hour = new Date().getHours();
   if (hour < 5) return "Good evening";
@@ -95,51 +87,47 @@ function HomeContent() {
   const searchParams = useSearchParams();
   const userName = useGravityUser((state) => state.name);
   const hydrate = useGravityUser((state) => state.hydrate);
+  const { missions, loading, updateLocalStatus } = useMissionFeed();
   const [missionId, setMissionId] = React.useState<string | null>(null);
+  const [thread, setThread] = React.useState<{ id: string; prompt: string }[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const [prefill, setPrefill] = React.useState("");
   const [focusComposer, setFocusComposer] = React.useState(false);
-  const [recent, setRecent] = React.useState<MissionRow[]>([]);
-  const [stats, setStats] = React.useState<{
-    total: number;
-    completed: number;
-    tokensMonth: number;
-    tokensAll: number;
-  } | null>(null);
   const runRef = React.useRef<HTMLDivElement>(null);
   const composerRef = React.useRef<HTMLDivElement>(null);
   const remountRef = React.useRef(0);
 
-  const loadDashboard = React.useCallback(async () => {
-    try {
-      const res = await fetch("/api/missions", { cache: "no-store" });
-      if (!res.ok) return;
-      const json = (await res.json()) as { missions?: MissionRow[] };
-      const missions = json.missions ?? [];
-      const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-      const completed = missions.filter((m) => m.status === "completed");
-      const tokensMonth = missions
-        .filter((m) => new Date(m.createdAt).getTime() >= monthStart)
-        .reduce((sum, m) => sum + (m.totalTokens ?? 0), 0);
-      const tokensAll = missions.reduce((sum, m) => sum + (m.totalTokens ?? 0), 0);
-      setStats({ total: missions.length, completed: completed.length, tokensMonth, tokensAll });
-      setRecent(
-        [...missions]
-          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-          .slice(0, 4),
-      );
-    } catch {
-      /* engine offline */
-    }
-  }, []);
+  const stats = React.useMemo(() => {
+    if (loading) return null;
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const completed = missions.filter((m) => m.status === "completed");
+    const tokensMonth = missions
+      .filter((m) => new Date(m.createdAt).getTime() >= monthStart)
+      .reduce((sum, m) => sum + (m.totalTokens ?? 0), 0);
+    const tokensAll = missions.reduce((sum, m) => sum + (m.totalTokens ?? 0), 0);
+    return {
+      total: missions.length,
+      completed: completed.length,
+      tokensMonth,
+      tokensAll,
+    };
+  }, [missions, loading]);
+
+  const recent = React.useMemo(
+    () => [...missions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 4),
+    [missions],
+  );
+
+  const timeline = React.useMemo(
+    () => [...missions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 6),
+    [missions],
+  );
 
   React.useEffect(() => {
     hydrate();
-    const timer = window.setTimeout(loadDashboard, 0);
-    return () => window.clearTimeout(timer);
-  }, [loadDashboard, hydrate]);
+  }, [hydrate]);
 
   React.useEffect(() => {
     if (searchParams.get("compose") === "1") {
@@ -162,6 +150,7 @@ function HomeContent() {
     try {
       const id = await startMission(prompt, files);
       setMissionId(id);
+      setThread((prev) => [...prev, { id, prompt }]);
     } catch {
       setSubmitError(
         "GRAVITY could not start the task. Check your connection and try again in a moment.",
@@ -256,12 +245,14 @@ function HomeContent() {
               label="TASKS RUN"
               icon={<Layers className="size-4" />}
               value={stats ? num(stats.total) : null}
+              count={stats ? stats.total : undefined}
               foot="LIFETIME"
             />
             <StatCard
               label="COMPLETED"
               icon={<CheckCircle2 className="size-4" />}
               value={stats ? num(stats.completed) : null}
+              count={stats ? stats.completed : undefined}
               foot="DELIVERED TO YOU"
             />
             <StatCard
@@ -275,6 +266,7 @@ function HomeContent() {
               label="TOKENS / MONTH"
               icon={<Timer className="size-4" />}
               value={stats ? num(stats.tokensMonth) : null}
+              count={stats ? stats.tokensMonth : undefined}
               foot={`OF ${FREE_LIMIT.toLocaleString()} ALLOWED`}
               metric={stats && usagePct < 70 ? "ok" : "warn"}
             />
@@ -305,8 +297,50 @@ function HomeContent() {
       </div>
 
       <div ref={runRef}>
+        {thread.length > 0 ? (
+          <section className="studio-thread mt-16">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="studio-eyebrow">LIVE THREAD</p>
+              <span className="studio-meta">
+                {thread.length} TURN{thread.length > 1 ? "S" : ""} THIS SESSION
+              </span>
+            </div>
+            <div className="studio-thread-list mt-4">
+              {thread.map((turn, index) => {
+                const latest = index === thread.length - 1;
+                const active = turn.id === missionId;
+                return (
+                  <button
+                    key={turn.id}
+                    type="button"
+                    onClick={() => setMissionId(turn.id)}
+                    className={`studio-thread-item ${active ? "studio-thread-item-active" : ""}`}
+                  >
+                    <span className="studio-thread-index">{String(index + 1).padStart(2, "0")}</span>
+                    <span className="min-w-0 flex-1 truncate text-left text-sm text-[color:var(--color-ivory-dim)]">
+                      {turn.prompt}
+                    </span>
+                    {latest ? <span className="studio-example-chip !border-gold/40 !text-gold">LATEST</span> : null}
+                    {active ? (
+                      <span className="studio-meta">VIEWING</span>
+                    ) : (
+                      <ArrowRight className="size-3.5 shrink-0 text-[color:var(--color-muted-foreground)]" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
         {missionId ? (
-          <MissionRun missionId={missionId} onFollowUp={handleFollowUp} onRetry={handleRetry} />
+          <div className={thread.length > 1 ? "mt-6" : "mt-0"}>
+            <MissionRun
+              missionId={missionId}
+              onFollowUp={handleFollowUp}
+              onRetry={handleRetry}
+              onStatus={(status) => updateLocalStatus(missionId, status)}
+            />
+          </div>
         ) : null}
       </div>
 
@@ -405,6 +439,59 @@ function HomeContent() {
         )}
       </section>
 
+      <section className="studio-section-borderless mt-16">
+        <div className="flex flex-wrap items-end justify-between gap-6">
+          <div>
+            <p className="studio-eyebrow">05 / ACTIVITY</p>
+            <h2 className="studio-section-title mt-3">The visible trail.</h2>
+          </div>
+          <p className="studio-muted max-w-xs">
+            Every run leaves receipts — saved so you can revisit the how as easily as the what.
+          </p>
+        </div>
+
+        {timeline.length > 0 ? (
+          <ol className="studio-timeline mt-9">
+            {timeline.map((item) => {
+              const done = item.status === "completed";
+              const failed = item.status === "failed";
+              return (
+                <li key={item.id}>
+                  <Link href={`/projects/${item.id}`} className="studio-timeline-row group">
+                    <span
+                      className={`studio-timeline-dot ${
+                        failed
+                          ? "studio-timeline-dot-failed"
+                          : !done
+                            ? "studio-timeline-dot-live"
+                            : ""
+                      }`}
+                    />
+                    <span className="studio-timeline-body">
+                      <p className="studio-timeline-prompt">{item.prompt}</p>
+                      <p className="studio-timeline-meta">
+                        {done ? "COMPLETE" : failed ? "FAILED" : item.status.toUpperCase()}
+                        {item.selectedStrategy ? ` · ${item.selectedStrategy.replaceAll("_", " ")}` : ""}
+                      </p>
+                    </span>
+                    <span className="studio-timeline-time">
+                      {new Date(item.createdAt).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ol>
+        ) : (
+          <p className="studio-muted mt-8">Nothing has run yet. Your activity will appear here.</p>
+        )}
+      </section>
+
       <section className="studio-quote-section studio-contrast-band studio-bone-band mt-20">
         <div className="studio-quote-mark">“</div>
         <div>
@@ -422,23 +509,60 @@ function HomeContent() {
           Start creating <ArrowRight className="size-3.5" />
         </button>
       </section>
+
+      {stats && usagePct > 70 ? (
+        <div className="studio-nudge-pill">
+          <Zap className="size-3.5 text-gold" />
+          <span>
+            You&apos;ve used <strong>{Math.round(usagePct)}%</strong> of this month&apos;s free tokens.
+          </span>
+          <Link href="/settings" className="studio-nudge-link">
+            Upgrade <ArrowRight className="size-3" />
+          </Link>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function CountUp({ value }: { value: number }) {
+  const [display, setDisplay] = React.useState(0);
+  const fromRef = React.useRef(0);
+  React.useEffect(() => {
+    const duration = 700;
+    const start = performance.now();
+    const from = fromRef.current;
+    let raf = 0;
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - p, 3);
+      const current = Math.round(from + (value - from) * eased);
+      fromRef.current = current;
+      setDisplay(current);
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+  return <>{display.toLocaleString()}</>;
 }
 
 function StatCard({
   label,
   icon,
   value,
+  count,
   foot,
   metric,
 }: {
   label: string;
   icon: React.ReactNode;
   value: string | null;
+  count?: number;
   foot: string;
   metric?: "ok" | "warn";
 }) {
+  const animate = count !== undefined && value !== null;
   return (
     <div className="studio-stat-card">
       <div className="studio-stat-label">
@@ -448,7 +572,9 @@ function StatCard({
       {value === null ? (
         <p className="studio-skeleton mt-4 h-8 w-16" />
       ) : (
-        <p className="studio-stat-value">{value}</p>
+        <p className="studio-stat-value">
+          {animate ? <CountUp value={count!} /> : value}
+        </p>
       )}
       <p className={`studio-stat-foot ${metric ? `studio-stat-metric-${metric}` : ""}`}>{foot}</p>
     </div>

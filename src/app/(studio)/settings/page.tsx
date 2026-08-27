@@ -4,10 +4,12 @@ import * as React from "react";
 import { onAuthStateChanged, sendPasswordResetEmail } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { useGravityUser } from "@/lib/gravity-user";
+import { useMissionFeed } from "@/lib/gravity-missions";
 import { toast } from "@/components/studio/toast";
 import {
   Check,
   CreditCard,
+  Download,
   LoaderCircle,
   Mail,
   RotateCcw,
@@ -97,7 +99,18 @@ export default function SettingsPage() {
   const [tab, setTab] = React.useState<Tab>("profile");
   const [userEmail, setUserEmail] = React.useState<string | null>(null);
   const [createdAt, setCreatedAt] = React.useState<string | null>(null);
-  const [usage, setUsage] = React.useState<Usage>({ total: null, month: null });
+  const { missions, loading } = useMissionFeed();
+
+  const usage = React.useMemo<Usage>(() => {
+    if (loading) return { total: null, month: null };
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const total = missions.reduce((sum, m) => sum + (m.totalTokens ?? 0), 0);
+    const monthly = missions
+      .filter((m) => new Date(m.createdAt).getTime() >= monthStart)
+      .reduce((sum, m) => sum + (m.totalTokens ?? 0), 0);
+    return { total, month: monthly };
+  }, [missions, loading]);
 
   React.useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -107,27 +120,6 @@ export default function SettingsPage() {
       }
     });
     return () => unsub();
-  }, []);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    fetch("/api/missions", { cache: "no-store" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json: { missions?: { totalTokens: number | null; createdAt: string }[] } | null) => {
-        if (cancelled || !json?.missions) return;
-        const missions = json.missions;
-        const now = new Date();
-        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-        const total = missions.reduce((sum, m) => sum + (m.totalTokens ?? 0), 0);
-        const monthly = missions
-          .filter((m) => new Date(m.createdAt).getTime() >= monthStart)
-          .reduce((sum, m) => sum + (m.totalTokens ?? 0), 0);
-        setUsage({ total, month: monthly });
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   return (
@@ -176,6 +168,7 @@ function ProfileTab({ email, createdAt }: { email: string | null; createdAt: str
   const [name, setName] = React.useState(user.name ?? "");
   const [role, setRole] = React.useState(user.role ?? "");
   const [saving, setSaving] = React.useState(false);
+  const [exporting, setExporting] = React.useState(false);
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -200,6 +193,46 @@ function ProfileTab({ email, createdAt }: { email: string | null; createdAt: str
       setSaving(false);
       toast("Profile saved", "Your details are up to date.", "success");
     }, 350);
+  };
+
+  const exportData = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const res = await fetch("/api/missions", { cache: "no-store" });
+      const json = res.ok
+        ? ((await res.json()) as { missions?: unknown[] })
+        : { missions: [] };
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        account: {
+          email,
+          displayName: name || null,
+          role,
+          memberSince: createdAt || null,
+        },
+        preferences: {
+          defaultSurface: user.defaultSurface,
+          confirmDelete: user.confirmDelete,
+          onboarded: user.onboarded,
+        },
+        projects: json.missions ?? [],
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "gravity-export.json";
+      a.click();
+      URL.revokeObjectURL(url);
+      toast("Export ready", "Your data download has begun.", "success");
+    } catch {
+      toast("Export failed", "Could not collect your data right now.", "error");
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -279,6 +312,28 @@ function ProfileTab({ email, createdAt }: { email: string | null; createdAt: str
           <button type="button" onClick={save} disabled={saving} className="studio-primary-button">
             {saving ? <LoaderCircle className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
             {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
+
+      <div className="studio-settings-group">
+        <div className="studio-settings-group-head">
+          <h2 className="studio-settings-title">Your data</h2>
+          <p className="studio-meta">PORTABLE & YOURS</p>
+        </div>
+        <p className="studio-settings-copy">
+          Download everything this workspace holds about you — account details, preferences, and every
+          project with its receipts — as a single JSON file.
+        </p>
+        <div className="mt-5">
+          <button
+            type="button"
+            onClick={exportData}
+            disabled={exporting}
+            className="studio-secondary-button"
+          >
+            <Download className="size-3.5" />
+            {exporting ? "Preparing…" : "Export my data"}
           </button>
         </div>
       </div>

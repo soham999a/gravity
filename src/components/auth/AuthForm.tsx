@@ -64,7 +64,7 @@ if (mode === "signup") {
     <div className="auth-container">
       <div className="auth-left">
         <div className="auth-brand">
-          <div className="auth-mark">G</div>
+          <img src="/logo.jpg" alt="" aria-hidden="true" className="auth-mark-img" />
           <div className="auth-wordmark">GRAVITY</div>
         </div>
         <h1 className="auth-headline">

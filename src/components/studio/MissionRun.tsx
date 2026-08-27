@@ -1,7 +1,19 @@
 "use client";
 
 import * as React from "react";
-import { Check, ChevronDown, Copy, LoaderCircle, RotateCcw, Wand2 } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Copy,
+  Download,
+  LoaderCircle,
+  Monitor,
+  RotateCcw,
+  Smartphone,
+  Tablet,
+  Wand2,
+} from "lucide-react";
+import { Markdown } from "@/components/studio/Markdown";
 
 interface MissionData {
   mission: {
@@ -64,16 +76,29 @@ function titleFromPrompt(prompt: string): string {
   return clean.length > 64 ? `${clean.slice(0, 61)}…` : clean || "A considered response";
 }
 
+function downloadText(text: string, filename: string) {
+  const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function MissionRun({
   missionId,
   onFollowUp,
   onRetry,
+  onStatus,
 }: {
   missionId: string;
   /** Runs a refinement as a brand-new task seeded with the original context. */
   onFollowUp?: (refinement: string) => Promise<void>;
   /** Re-executes this same mission after a failure. */
   onRetry?: () => Promise<void>;
+  /** Receives the live mission status on every poll tick (pending → … → completed/failed). */
+  onStatus?: (status: string) => void;
 }) {
   const [data, setData] = React.useState<MissionData | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -82,6 +107,11 @@ export function MissionRun({
   const [refinement, setRefinement] = React.useState("");
   const [followBusy, setFollowBusy] = React.useState(false);
   const [retryBusy, setRetryBusy] = React.useState(false);
+  const [rawOpen, setRawOpen] = React.useState(false);
+  const onStatusRef = React.useRef(onStatus);
+  React.useEffect(() => {
+    onStatusRef.current = onStatus;
+  }, [onStatus]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -95,6 +125,7 @@ export function MissionRun({
         if (cancelled) return;
         setData(json);
         setError(null);
+        onStatusRef.current?.(json.mission.status);
         if (ACTIVE.includes(json.mission.status)) {
           timer = setTimeout(poll, 1600);
         }
@@ -103,11 +134,12 @@ export function MissionRun({
       }
     };
 
-    setData(null);
+    const reset = requestAnimationFrame(() => setData(null));
     poll();
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      cancelAnimationFrame(reset);
     };
   }, [missionId]);
 
@@ -302,6 +334,26 @@ export function MissionRun({
               onCopy={() => copyOutput(outputText)}
             />
 
+            <div className="mt-6 border-t border-border pt-4">
+              <button
+                type="button"
+                onClick={() => setRawOpen((current) => !current)}
+                className="flex w-full items-center justify-between text-left"
+              >
+                <span className="studio-eyebrow">
+                  {rawOpen ? "HIDE RAW LOG" : "SHOW RAW LOG"}
+                </span>
+                <ChevronDown
+                  className={`size-4 text-[color:var(--color-muted-foreground)] transition-transform ${rawOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+              {rawOpen ? (
+                <pre className="studio-code-block mt-3">
+                  <code>{JSON.stringify(data, null, 2)}</code>
+                </pre>
+              ) : null}
+            </div>
+
             {onFollowUp ? (
               <div className="mt-9 border-t border-border pt-6">
                 <label className="studio-eyebrow" htmlFor="refine-input">
@@ -400,9 +452,7 @@ function ResultSurface({
     <div className="studio-result-grid">
       <div className="studio-output-preview">
         <div className="studio-preview-brand">
-          <span className="studio-mark" style={{ height: 20, width: 20, fontSize: 10 }}>
-            G
-          </span>
+          <img src="/logo.jpg" alt="" aria-hidden="true" className="studio-mark-img studio-mark-img-sm" />
           <span>GRAVITY / STUDIO</span>
         </div>
         <div style={{ paddingTop: 28 }}>
@@ -411,7 +461,9 @@ function ResultSurface({
           ) : parsedType === "website" && parsedData?.html ? (
             <WebsiteResult html={parsedData.html} />
           ) : (
-            <p className="studio-output-text">{output}</p>
+            <div className="studio-md-stack">
+              <Markdown>{output}</Markdown>
+            </div>
           )}
         </div>
         <span
@@ -470,6 +522,20 @@ function ResultSurface({
             <Copy className="size-3.5" />
             {copied ? "Copied" : parsedType === "website" ? "Copy HTML" : "Copy result"}
           </button>
+          {parsedType === "website" && parsedData?.html ? (
+            <button
+              type="button"
+              className="studio-secondary-button"
+              onClick={() =>
+                downloadText(
+                  `# ${titleFromPrompt(prompt)}\n\n> Generated by the GRAVITY engine.\n\nDownload the HTML file for the complete rendered site.\n`,
+                  "gravity-result.md",
+                )
+              }
+            >
+              <Download className="size-3.5" /> Export .md
+            </button>
+          ) : null}
           {parsedType === "images" && parsedData?.images ? (
             <a
               href={parsedData.images[0]!.url}
@@ -479,6 +545,29 @@ function ResultSurface({
             >
               Open full size
             </a>
+          ) : null}
+          {parsedType === "images" && parsedData?.images ? (
+            <button
+              type="button"
+              className="studio-secondary-button"
+              onClick={() =>
+                downloadText(
+                  parsedData!.images!.map((img, i) => `## Image ${i + 1}\n\n![Generated](${img.url})\n`).join("\n"),
+                  "gravity-images.md",
+                )
+              }
+            >
+              <Download className="size-3.5" /> Export .md
+            </button>
+          ) : null}
+          {!parsedType ? (
+            <button
+              type="button"
+              className="studio-secondary-button"
+              onClick={() => downloadText(output, "gravity-result.md")}
+            >
+              <Download className="size-3.5" /> Export .md
+            </button>
           ) : null}
         </div>
       </div>
@@ -523,6 +612,7 @@ function ImageResult({
 
 function WebsiteResult({ html }: { html: string }) {
   const [expanded, setExpanded] = React.useState(false);
+  const [device, setDevice] = React.useState<"desktop" | "tablet" | "mobile">("desktop");
   const iframeRef = React.useRef<HTMLIFrameElement>(null);
 
   // Auto-resize iframe to content height
@@ -555,8 +645,35 @@ function WebsiteResult({ html }: { html: string }) {
           <span className="chrome-dot" style={{ background: "#28c840" }} />
         </div>
         <div className="studio-chrome-url">gravity.studio/generated</div>
+        <div className="studio-website-devices">
+          {(
+            [
+              ["desktop", Monitor, "Desktop"],
+              ["tablet", Tablet, "Tablet"],
+              ["mobile", Smartphone, "Mobile"],
+            ] as const
+          ).map(([key, Icon, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setDevice(key)}
+              aria-label={label}
+              title={label}
+              className={`studio-device-button ${device === key ? "studio-device-button-active" : ""}`}
+            >
+              <Icon className="size-3.5" />
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="studio-website-preview">
+      <div
+        className="studio-website-preview"
+        style={{
+          maxWidth: device === "mobile" ? 390 : device === "tablet" ? 768 : "100%",
+          marginLeft: "auto",
+          marginRight: "auto",
+        }}
+      >
         <iframe
           ref={iframeRef}
           srcDoc={html}
