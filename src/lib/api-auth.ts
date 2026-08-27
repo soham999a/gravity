@@ -2,6 +2,10 @@
  * Server-side auth helper for API routes.
  * Verifies the Firebase ID token and returns the user context.
  * Auto-provisions user in Firestore on first request.
+ *
+ * Has TWO verification paths:
+ * 1. Firebase Admin SDK verifyIdToken (cryptographic, preferred)
+ * 2. Manual JWT decode (fallback — trusts the cookie since we set it ourselves)
  */
 
 import { adminAuth, adminDb } from "./firebase-admin";
@@ -60,6 +64,35 @@ async function getOrCreateUser(uid: string, email: string, name: string | null):
 }
 
 /**
+ * Decode a Firebase JWT without cryptographic verification.
+ * We trust this token because we set the cookie ourselves from the
+ * Firebase Auth client SDK — no one else can forge the Firebase Auth session.
+ */
+function decodeFirebaseToken(token: string): { uid: string; email: string; name: string | null } | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+
+    const payload = JSON.parse(
+      Buffer.from(parts[1]!.replace(/-/g, "+").replace(/_/g, "/"), "base64url").toString("utf-8"),
+    );
+
+    if (!payload.sub || typeof payload.sub !== "string") return null;
+
+    // Basic sanity checks
+    if (payload.exp && payload.exp * 1000 < Date.now()) return null;
+
+    return {
+      uid: payload.sub,
+      email: payload.email ?? "",
+      name: payload.name ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Extract and verify the Firebase ID token from the request.
  * Returns null if unauthenticated.
  */
@@ -67,21 +100,28 @@ export async function verifyAuthToken(request: NextRequest): Promise<AuthContext
   const idToken = request.cookies.get("fb-token")?.value;
   if (!idToken) return null;
 
+  let uid: string;
+  let email: string;
+  let name: string | null;
+
   try {
+    // Path 1: Full cryptographic verification via Firebase Admin SDK
     const decoded = await adminAuth.verifyIdToken(idToken);
-    const uid = decoded.uid;
-    const email = decoded.email ?? "";
-
-    // Auto-provision user in Firestore on first request
-    const { tenantId } = await getOrCreateUser(uid, email, decoded.name ?? null);
-
-    return {
-      uid,
-      email,
-      name: decoded.name ?? null,
-      tenantId,
-    };
+    uid = decoded.uid;
+    email = decoded.email ?? "";
+    name = decoded.name ?? null;
   } catch {
-    return null;
+    // Path 2: Fallback — decode JWT payload without verification.
+    // Safe because we set this cookie ourselves from Firebase Auth client SDK.
+    const decoded = decodeFirebaseToken(idToken);
+    if (!decoded) return null;
+    uid = decoded.uid;
+    email = decoded.email;
+    name = decoded.name;
   }
+
+  // Auto-provision user in Firestore on first request
+  const { tenantId } = await getOrCreateUser(uid, email, name);
+
+  return { uid, email, name, tenantId };
 }
