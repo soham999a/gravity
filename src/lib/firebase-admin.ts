@@ -34,6 +34,10 @@ function getAdminApp() {
   }
 }
 
+export function isFirebaseReady(): boolean {
+  return Boolean(getAdminApp());
+}
+
 // Lazy getters — never crash at import time
 function getDb(): Firestore {
   if (_db) return _db;

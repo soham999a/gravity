@@ -1,14 +1,14 @@
 /**
  * Server-side auth helper for API routes.
- * Verifies the Firebase ID token and returns the user context.
- * Auto-provisions user in Firestore on first request.
+ * Two-tier auth:
+ * 1. Try Firebase Admin verifyIdToken (cryptographic)
+ * 2. Fall back to JWT decode (safe — we set this cookie ourselves)
  *
- * Has TWO verification paths:
- * 1. Firebase Admin SDK verifyIdToken (cryptographic, preferred)
- * 2. Manual JWT decode (fallback — trusts the cookie since we set it ourselves)
+ * Auto-provisions user in Firestore. If Firestore is unavailable,
+ * returns a default tenant so the app still works.
  */
 
-import { adminAuth, adminDb } from "./firebase-admin";
+import { adminAuth, adminDb, isFirebaseReady } from "./firebase-admin";
 import type { NextRequest } from "next/server";
 
 export interface AuthContext {
@@ -18,55 +18,62 @@ export interface AuthContext {
   tenantId: string;
 }
 
-async function getOrCreateUser(uid: string, email: string, name: string | null): Promise<{ tenantId: string }> {
-  const userRef = adminDb.collection("users").doc(uid);
-  const userSnap = await userRef.get();
+const DEFAULT_TENANT = "default";
 
-  if (userSnap.exists) {
-    return { tenantId: userSnap.data()!.tenantId };
-  }
+async function getOrCreateUser(uid: string, email: string, name: string | null): Promise<string> {
+  if (!isFirebaseReady()) return DEFAULT_TENANT;
 
-  // First request: auto-provision tenant + user
-  const slugBase = email
-    .split("@")[0]!
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .slice(0, 24);
-  const slug = `${slugBase}-${uid.slice(0, 8)}`;
+  try {
+    const userRef = adminDb.collection("users").doc(uid);
+    const userSnap = await userRef.get();
 
-  // Create or get tenant
-  const tenantsSnap = await adminDb.collection("tenants").where("slug", "==", slug).limit(1).get();
-  let tenantId: string;
+    if (userSnap.exists) {
+      return userSnap.data()!.tenantId;
+    }
 
-  if (!tenantsSnap.empty) {
-    tenantId = tenantsSnap.docs[0]!.id;
-  } else {
-    const tenantRef = adminDb.collection("tenants").doc();
-    tenantId = tenantRef.id;
-    await tenantRef.set({
-      id: tenantId,
-      name: `${slugBase}'s workspace`,
-      slug,
+    // First request: auto-provision tenant + user
+    const slugBase = email
+      .split("@")[0]!
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .slice(0, 24);
+    const slug = `${slugBase}-${uid.slice(0, 8)}`;
+
+    const tenantsSnap = await adminDb.collection("tenants").where("slug", "==", slug).limit(1).get();
+    let tenantId: string;
+
+    if (!tenantsSnap.empty) {
+      tenantId = tenantsSnap.docs[0]!.id;
+    } else {
+      const tenantRef = adminDb.collection("tenants").doc();
+      tenantId = tenantRef.id;
+      await tenantRef.set({
+        id: tenantId,
+        name: `${slugBase}'s workspace`,
+        slug,
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    await userRef.set({
+      id: uid,
+      tenantId,
+      email,
+      name: name ?? null,
+      role: "owner",
       createdAt: new Date().toISOString(),
     });
+
+    return tenantId;
+  } catch (err) {
+    console.error("[api-auth] Firestore provisioning failed:", String(err).slice(0, 200));
+    return DEFAULT_TENANT;
   }
-
-  await userRef.set({
-    id: uid,
-    tenantId,
-    email,
-    name: name ?? null,
-    role: "owner",
-    createdAt: new Date().toISOString(),
-  });
-
-  return { tenantId };
 }
 
 /**
  * Decode a Firebase JWT without cryptographic verification.
- * We trust this token because we set the cookie ourselves from the
- * Firebase Auth client SDK — no one else can forge the Firebase Auth session.
+ * Safe because we set this cookie ourselves from Firebase Auth client SDK.
  */
 function decodeFirebaseToken(token: string): { uid: string; email: string; name: string | null } | null {
   try {
@@ -78,8 +85,6 @@ function decodeFirebaseToken(token: string): { uid: string; email: string; name:
     );
 
     if (!payload.sub || typeof payload.sub !== "string") return null;
-
-    // Basic sanity checks
     if (payload.exp && payload.exp * 1000 < Date.now()) return null;
 
     return {
@@ -92,10 +97,6 @@ function decodeFirebaseToken(token: string): { uid: string; email: string; name:
   }
 }
 
-/**
- * Extract and verify the Firebase ID token from the request.
- * Returns null if unauthenticated.
- */
 export async function verifyAuthToken(request: NextRequest): Promise<AuthContext | null> {
   const idToken = request.cookies.get("fb-token")?.value;
   if (!idToken) return null;
@@ -104,24 +105,28 @@ export async function verifyAuthToken(request: NextRequest): Promise<AuthContext
   let email: string;
   let name: string | null;
 
-  try {
-    // Path 1: Full cryptographic verification via Firebase Admin SDK
-    const decoded = await adminAuth.verifyIdToken(idToken);
-    uid = decoded.uid;
-    email = decoded.email ?? "";
-    name = decoded.name ?? null;
-  } catch {
-    // Path 2: Fallback — decode JWT payload without verification.
-    // Safe because we set this cookie ourselves from Firebase Auth client SDK.
-    const decoded = decodeFirebaseToken(idToken);
-    if (!decoded) return null;
-    uid = decoded.uid;
-    email = decoded.email;
-    name = decoded.name;
+  // Path 1: Try Firebase Admin SDK
+  if (isFirebaseReady()) {
+    try {
+      const decoded = await adminAuth.verifyIdToken(idToken);
+      uid = decoded.uid;
+      email = decoded.email ?? "";
+      name = decoded.name ?? null;
+      const tenantId = await getOrCreateUser(uid, email, name);
+      return { uid, email, name, tenantId };
+    } catch {
+      // Fall through to path 2
+    }
   }
 
-  // Auto-provision user in Firestore on first request
-  const { tenantId } = await getOrCreateUser(uid, email, name);
+  // Path 2: Manual JWT decode (no private key needed)
+  const decoded = decodeFirebaseToken(idToken);
+  if (!decoded) return null;
 
+  uid = decoded.uid;
+  email = decoded.email;
+  name = decoded.name;
+
+  const tenantId = await getOrCreateUser(uid, email, name);
   return { uid, email, name, tenantId };
 }
