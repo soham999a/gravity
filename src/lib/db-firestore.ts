@@ -1,20 +1,18 @@
 /**
  * Database layer — Firestore with in-memory fallback.
- * When Firebase Admin is unavailable (broken private key, missing Firestore),
- * falls back to in-memory storage so the app still works.
+ * Every Firestore path is try/caught: if Firestore throws (DB not created,
+ * network error, missing index, etc.) we silently fall back to in-memory
+ * so the app always works.
  */
 
-import { isFirebaseReady } from "./firebase-admin";
-import type { adminDb } from "./firebase-admin";
+import { isFirebaseReady, adminDb } from "./firebase-admin";
 
 // ---------------------------------------------------------------------------
 // Generic helpers
 // ---------------------------------------------------------------------------
 
 function col(name: string) {
-  // Lazy import to avoid circular init issues
-  const { adminDb: db } = require("./firebase-admin") as { adminDb: typeof import("./firebase-admin")["adminDb"] };
-  return db.collection(name);
+  return adminDb.collection(name);
 }
 
 function docId(): string {
@@ -30,7 +28,7 @@ function useFirestore(): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// In-memory fallback store (only used when Firestore is unavailable)
+// In-memory fallback store
 // ---------------------------------------------------------------------------
 
 const memStore: Record<string, Record<string, unknown>> = {};
@@ -53,18 +51,21 @@ export interface TenantDoc {
 
 export async function getOrCreateTenant(slug: string, name: string): Promise<TenantDoc> {
   if (useFirestore()) {
-    const snap = await col("tenants").where("slug", "==", slug).limit(1).get();
-    if (!snap.empty) {
-      const doc = snap.docs[0]!;
-      return { id: doc.id, ...doc.data() } as TenantDoc;
+    try {
+      const snap = await col("tenants").where("slug", "==", slug).limit(1).get();
+      if (!snap.empty) {
+        const doc = snap.docs[0]!;
+        return { id: doc.id, ...doc.data() } as TenantDoc;
+      }
+      const id = docId();
+      const tenant: TenantDoc = { id, name, slug, createdAt: new Date().toISOString() };
+      await col("tenants").doc(id).set(tenant);
+      return tenant;
+    } catch (err) {
+      console.warn("[db] Firestore tenants failed, using in-memory:", String(err).slice(0, 120));
     }
-    const id = docId();
-    const tenant: TenantDoc = { id, name, slug, createdAt: new Date().toISOString() };
-    await col("tenants").doc(id).set(tenant);
-    return tenant;
   }
 
-  // In-memory fallback
   const store = memCol("tenants");
   const existing = Object.values(store).find((t: any) => t.slug === slug) as TenantDoc | undefined;
   if (existing) return existing;
@@ -93,30 +94,33 @@ export async function getOrCreateUser(
   name: string | null,
 ): Promise<UserDoc> {
   if (useFirestore()) {
-    const doc = await col("users").doc(uid).get();
-    if (doc.exists) return { id: doc.id, ...doc.data() } as UserDoc;
+    try {
+      const doc = await col("users").doc(uid).get();
+      if (doc.exists) return { id: doc.id, ...doc.data() } as UserDoc;
 
-    const slugBase = email
-      .split("@")[0]!
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .slice(0, 24);
-    const slug = `${slugBase}-${uid.slice(0, 8)}`;
-    const tenant = await getOrCreateTenant(slug, `${slugBase}'s workspace`);
+      const slugBase = email
+        .split("@")[0]!
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .slice(0, 24);
+      const slug = `${slugBase}-${uid.slice(0, 8)}`;
+      const tenant = await getOrCreateTenant(slug, `${slugBase}'s workspace`);
 
-    const user: UserDoc = {
-      id: uid,
-      tenantId: tenant.id,
-      email,
-      name: name ?? null,
-      role: "owner",
-      createdAt: new Date().toISOString(),
-    };
-    await col("users").doc(uid).set(user);
-    return user;
+      const user: UserDoc = {
+        id: uid,
+        tenantId: tenant.id,
+        email,
+        name: name ?? null,
+        role: "owner",
+        createdAt: new Date().toISOString(),
+      };
+      await col("users").doc(uid).set(user);
+      return user;
+    } catch (err) {
+      console.warn("[db] Firestore users failed, using in-memory:", String(err).slice(0, 120));
+    }
   }
 
-  // In-memory fallback
   const store = memCol("users");
   if (store[uid]) return store[uid] as UserDoc;
   const slugBase = email
@@ -165,39 +169,55 @@ export async function createMission(data: Omit<MissionDoc, "id" | "createdAt">):
   const mission: MissionDoc = { ...data, id, createdAt: new Date().toISOString() };
 
   if (useFirestore()) {
-    await col("missions").doc(id).set(mission);
-  } else {
-    memCol("missions")[id] = mission;
+    try {
+      await col("missions").doc(id).set(mission);
+      return mission;
+    } catch (err) {
+      console.warn("[db] Firestore missions.create failed, using in-memory:", String(err).slice(0, 120));
+    }
   }
+  memCol("missions")[id] = mission;
   return mission;
 }
 
 export async function getMission(id: string): Promise<MissionDoc | null> {
   if (useFirestore()) {
-    const doc = await col("missions").doc(id).get();
-    if (!doc.exists) return null;
-    return { id: doc.id, ...doc.data() } as MissionDoc;
+    try {
+      const doc = await col("missions").doc(id).get();
+      if (!doc.exists) return null;
+      return { id: doc.id, ...doc.data() } as MissionDoc;
+    } catch (err) {
+      console.warn("[db] Firestore missions.get failed:", String(err).slice(0, 120));
+    }
   }
   return (memCol("missions")[id] as MissionDoc) ?? null;
 }
 
 export async function updateMission(id: string, data: Partial<MissionDoc>): Promise<void> {
   if (useFirestore()) {
-    await col("missions").doc(id).update(data);
-  } else {
-    const existing = memCol("missions")[id];
-    if (existing) Object.assign(existing, data);
+    try {
+      await col("missions").doc(id).update(data);
+      return;
+    } catch (err) {
+      console.warn("[db] Firestore missions.update failed:", String(err).slice(0, 120));
+    }
   }
+  const existing = memCol("missions")[id];
+  if (existing) Object.assign(existing, data);
 }
 
 export async function listMissions(tenantId: string, limit = 50): Promise<MissionDoc[]> {
   if (useFirestore()) {
-    const snap = await col("missions")
-      .where("tenantId", "==", tenantId)
-      .orderBy("createdAt", "desc")
-      .limit(limit)
-      .get();
-    return snap.docs.map((d: any) => ({ id: d.id, ...d.data() } as MissionDoc));
+    try {
+      const snap = await col("missions")
+        .where("tenantId", "==", tenantId)
+        .orderBy("createdAt", "desc")
+        .limit(limit)
+        .get();
+      return snap.docs.map((d: any) => ({ id: d.id, ...d.data() } as MissionDoc));
+    } catch (err) {
+      console.warn("[db] Firestore missions.list failed:", String(err).slice(0, 120));
+    }
   }
   return Object.values(memCol("missions"))
     .filter((m: any) => m.tenantId === tenantId)
@@ -207,31 +227,34 @@ export async function listMissions(tenantId: string, limit = 50): Promise<Missio
 
 export async function deleteMission(id: string): Promise<void> {
   if (useFirestore()) {
-    const batch = (await import("./firebase-admin")).adminDb.batch();
-    const runsSnap = await col("executionRuns").where("missionId", "==", id).get();
-    for (const run of runsSnap.docs) {
-      const nodesSnap = await col("executionNodes").where("runId", "==", run.id).get();
-      for (const node of nodesSnap.docs) batch.delete(node.ref);
-      batch.delete(run.ref);
-    }
-    for (const c of ["problemProfiles", "routingDecisions", "evaluations", "decisionLedger"]) {
-      const snap = await col(c).where("missionId", "==", id).get();
-      for (const d of snap.docs) batch.delete(d.ref);
-    }
-    batch.delete(col("missions").doc(id));
-    await batch.commit();
-  } else {
-    // In-memory cleanup
-    for (const runId of Object.keys(memCol("executionRuns")).filter(k => (memCol("executionRuns")[k] as any)?.missionId === id)) {
-      delete memCol("executionNodes")[runId];
-    }
-    for (const c of ["executionRuns", "problemProfiles", "routingDecisions", "evaluations", "decisionLedger"]) {
-      for (const [k, v] of Object.entries(memCol(c))) {
-        if ((v as any)?.missionId === id) delete memCol(c)[k];
+    try {
+      const batch = adminDb.batch();
+      const runsSnap = await col("executionRuns").where("missionId", "==", id).get();
+      for (const run of runsSnap.docs) {
+        const nodesSnap = await col("executionNodes").where("runId", "==", run.id).get();
+        for (const node of nodesSnap.docs) batch.delete(node.ref);
+        batch.delete(run.ref);
       }
+      for (const c of ["problemProfiles", "routingDecisions", "evaluations", "decisionLedger"]) {
+        const snap = await col(c).where("missionId", "==", id).get();
+        for (const d of snap.docs) batch.delete(d.ref);
+      }
+      batch.delete(col("missions").doc(id));
+      await batch.commit();
+      return;
+    } catch (err) {
+      console.warn("[db] Firestore missions.delete failed:", String(err).slice(0, 120));
     }
-    delete memCol("missions")[id];
   }
+  for (const runId of Object.keys(memCol("executionRuns")).filter(k => (memCol("executionRuns")[k] as any)?.missionId === id)) {
+    delete memCol("executionNodes")[runId];
+  }
+  for (const c of ["executionRuns", "problemProfiles", "routingDecisions", "evaluations", "decisionLedger"]) {
+    for (const [k, v] of Object.entries(memCol(c))) {
+      if ((v as any)?.missionId === id) delete memCol(c)[k];
+    }
+  }
+  delete memCol("missions")[id];
 }
 
 // ---------------------------------------------------------------------------
@@ -252,19 +275,27 @@ export async function createProblemProfile(data: Omit<ProblemProfileDoc, "id">):
   const id = docId();
   const doc: ProblemProfileDoc = { ...data, id };
   if (useFirestore()) {
-    await col("problemProfiles").doc(id).set(doc);
-  } else {
-    memCol("problemProfiles")[id] = doc;
+    try {
+      await col("problemProfiles").doc(id).set(doc);
+      return doc;
+    } catch (err) {
+      console.warn("[db] Firestore problemProfiles.create failed:", String(err).slice(0, 120));
+    }
   }
+  memCol("problemProfiles")[id] = doc;
   return doc;
 }
 
 export async function getProblemProfile(missionId: string): Promise<ProblemProfileDoc | null> {
   if (useFirestore()) {
-    const snap = await col("problemProfiles").where("missionId", "==", missionId).limit(1).get();
-    if (snap.empty) return null;
-    const d = snap.docs[0]!;
-    return { id: d.id, ...d.data() } as ProblemProfileDoc;
+    try {
+      const snap = await col("problemProfiles").where("missionId", "==", missionId).limit(1).get();
+      if (snap.empty) return null;
+      const d = snap.docs[0]!;
+      return { id: d.id, ...d.data() } as ProblemProfileDoc;
+    } catch (err) {
+      console.warn("[db] Firestore problemProfiles.get failed:", String(err).slice(0, 120));
+    }
   }
   return Object.values(memCol("problemProfiles")).find((p: any) => p.missionId === missionId) as ProblemProfileDoc ?? null;
 }
@@ -288,19 +319,27 @@ export async function createRoutingDecision(data: Omit<RoutingDecisionDoc, "id">
   const id = docId();
   const doc: RoutingDecisionDoc = { ...data, id };
   if (useFirestore()) {
-    await col("routingDecisions").doc(id).set(doc);
-  } else {
-    memCol("routingDecisions")[id] = doc;
+    try {
+      await col("routingDecisions").doc(id).set(doc);
+      return doc;
+    } catch (err) {
+      console.warn("[db] Firestore routingDecisions.create failed:", String(err).slice(0, 120));
+    }
   }
+  memCol("routingDecisions")[id] = doc;
   return doc;
 }
 
 export async function getRoutingDecision(missionId: string): Promise<RoutingDecisionDoc | null> {
   if (useFirestore()) {
-    const snap = await col("routingDecisions").where("missionId", "==", missionId).limit(1).get();
-    if (snap.empty) return null;
-    const d = snap.docs[0]!;
-    return { id: d.id, ...d.data() } as RoutingDecisionDoc;
+    try {
+      const snap = await col("routingDecisions").where("missionId", "==", missionId).limit(1).get();
+      if (snap.empty) return null;
+      const d = snap.docs[0]!;
+      return { id: d.id, ...d.data() } as RoutingDecisionDoc;
+    } catch (err) {
+      console.warn("[db] Firestore routingDecisions.get failed:", String(err).slice(0, 120));
+    }
   }
   return Object.values(memCol("routingDecisions")).find((r: any) => r.missionId === missionId) as RoutingDecisionDoc ?? null;
 }
@@ -328,26 +367,38 @@ export async function createExecutionRun(missionId: string): Promise<ExecutionRu
     startedAt: new Date().toISOString(), completedAt: null,
   };
   if (useFirestore()) {
-    await col("executionRuns").doc(id).set(run);
-  } else {
-    memCol("executionRuns")[id] = run;
+    try {
+      await col("executionRuns").doc(id).set(run);
+      return run;
+    } catch (err) {
+      console.warn("[db] Firestore executionRuns.create failed:", String(err).slice(0, 120));
+    }
   }
+  memCol("executionRuns")[id] = run;
   return run;
 }
 
 export async function updateExecutionRun(id: string, data: Partial<ExecutionRunDoc>): Promise<void> {
   if (useFirestore()) {
-    await col("executionRuns").doc(id).update(data);
-  } else {
-    const existing = memCol("executionRuns")[id];
-    if (existing) Object.assign(existing, data);
+    try {
+      await col("executionRuns").doc(id).update(data);
+      return;
+    } catch (err) {
+      console.warn("[db] Firestore executionRuns.update failed:", String(err).slice(0, 120));
+    }
   }
+  const existing = memCol("executionRuns")[id];
+  if (existing) Object.assign(existing, data);
 }
 
 export async function getExecutionRuns(missionId: string): Promise<ExecutionRunDoc[]> {
   if (useFirestore()) {
-    const snap = await col("executionRuns").where("missionId", "==", missionId).get();
-    return snap.docs.map((d: any) => ({ id: d.id, ...d.data() } as ExecutionRunDoc));
+    try {
+      const snap = await col("executionRuns").where("missionId", "==", missionId).get();
+      return snap.docs.map((d: any) => ({ id: d.id, ...d.data() } as ExecutionRunDoc));
+    } catch (err) {
+      console.warn("[db] Firestore executionRuns.get failed:", String(err).slice(0, 120));
+    }
   }
   return Object.values(memCol("executionRuns")).filter((r: any) => r.missionId === missionId) as ExecutionRunDoc[];
 }
@@ -378,26 +429,38 @@ export async function createExecutionNode(data: Omit<ExecutionNodeDoc, "id">): P
   const id = docId();
   const node: ExecutionNodeDoc = { ...data, id };
   if (useFirestore()) {
-    await col("executionNodes").doc(id).set(node);
-  } else {
-    memCol("executionNodes")[id] = node;
+    try {
+      await col("executionNodes").doc(id).set(node);
+      return node;
+    } catch (err) {
+      console.warn("[db] Firestore executionNodes.create failed:", String(err).slice(0, 120));
+    }
   }
+  memCol("executionNodes")[id] = node;
   return node;
 }
 
 export async function updateExecutionNode(id: string, data: Partial<ExecutionNodeDoc>): Promise<void> {
   if (useFirestore()) {
-    await col("executionNodes").doc(id).update(data);
-  } else {
-    const existing = memCol("executionNodes")[id];
-    if (existing) Object.assign(existing, data);
+    try {
+      await col("executionNodes").doc(id).update(data);
+      return;
+    } catch (err) {
+      console.warn("[db] Firestore executionNodes.update failed:", String(err).slice(0, 120));
+    }
   }
+  const existing = memCol("executionNodes")[id];
+  if (existing) Object.assign(existing, data);
 }
 
 export async function getExecutionNodes(runId: string): Promise<ExecutionNodeDoc[]> {
   if (useFirestore()) {
-    const snap = await col("executionNodes").where("runId", "==", runId).get();
-    return snap.docs.map((d: any) => ({ id: d.id, ...d.data() } as ExecutionNodeDoc));
+    try {
+      const snap = await col("executionNodes").where("runId", "==", runId).get();
+      return snap.docs.map((d: any) => ({ id: d.id, ...d.data() } as ExecutionNodeDoc));
+    } catch (err) {
+      console.warn("[db] Firestore executionNodes.get failed:", String(err).slice(0, 120));
+    }
   }
   return Object.values(memCol("executionNodes")).filter((n: any) => n.runId === runId) as ExecutionNodeDoc[];
 }
@@ -420,19 +483,27 @@ export async function createEvaluation(data: Omit<EvaluationDoc, "id">): Promise
   const id = docId();
   const doc: EvaluationDoc = { ...data, id };
   if (useFirestore()) {
-    await col("evaluations").doc(id).set(doc);
-  } else {
-    memCol("evaluations")[id] = doc;
+    try {
+      await col("evaluations").doc(id).set(doc);
+      return doc;
+    } catch (err) {
+      console.warn("[db] Firestore evaluations.create failed:", String(err).slice(0, 120));
+    }
   }
+  memCol("evaluations")[id] = doc;
   return doc;
 }
 
 export async function getEvaluation(missionId: string): Promise<EvaluationDoc | null> {
   if (useFirestore()) {
-    const snap = await col("evaluations").where("missionId", "==", missionId).limit(1).get();
-    if (snap.empty) return null;
-    const d = snap.docs[0]!;
-    return { id: d.id, ...d.data() } as EvaluationDoc;
+    try {
+      const snap = await col("evaluations").where("missionId", "==", missionId).limit(1).get();
+      if (snap.empty) return null;
+      const d = snap.docs[0]!;
+      return { id: d.id, ...d.data() } as EvaluationDoc;
+    } catch (err) {
+      console.warn("[db] Firestore evaluations.get failed:", String(err).slice(0, 120));
+    }
   }
   return Object.values(memCol("evaluations")).find((e: any) => e.missionId === missionId) as EvaluationDoc ?? null;
 }
@@ -466,9 +537,13 @@ export async function createDecisionLedgerEntry(data: Omit<DecisionLedgerDoc, "i
   const id = docId();
   const doc: DecisionLedgerDoc = { ...data, id, timestamp: new Date().toISOString() };
   if (useFirestore()) {
-    await col("decisionLedger").doc(id).set(doc);
-  } else {
-    memCol("decisionLedger")[id] = doc;
+    try {
+      await col("decisionLedger").doc(id).set(doc);
+      return doc;
+    } catch (err) {
+      console.warn("[db] Firestore decisionLedger.create failed:", String(err).slice(0, 120));
+    }
   }
+  memCol("decisionLedger")[id] = doc;
   return doc;
 }
