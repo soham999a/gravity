@@ -212,7 +212,15 @@ export function MissionRun({
             </h2>
             <p className="studio-muted mt-3 max-w-xl">{mission.prompt}</p>
           </div>
-          <span className={`studio-status-pill ${running ? "studio-status-pill-busy" : ""}`}>
+          <span
+            className={`studio-status-pill ${
+              failed
+                ? "studio-status-pill-danger"
+                : running
+                  ? "studio-status-pill-busy"
+                  : ""
+            }`}
+          >
             {!running && !failed ? <span className="status-dot" /> : null}
             {running ? `${mission.status.toUpperCase()}…` : failed ? "FAILED" : "COMPLETE"}
           </span>

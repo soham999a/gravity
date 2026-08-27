@@ -12,11 +12,13 @@ export function TaskComposer({
   initialValue = "",
   busy = false,
   compact = false,
+  autoFocus = false,
   onSubmit,
 }: {
   initialValue?: string;
   busy?: boolean;
   compact?: boolean;
+  autoFocus?: boolean;
   onSubmit: (prompt: string, files?: CsvFile[]) => void;
 }) {
   const [prompt, setPrompt] = React.useState(initialValue);
@@ -77,7 +79,12 @@ export function TaskComposer({
     );
   };
 
-  const totalSize = files.reduce((sum, f) => sum + f.data.length, 0);
+  const totalSize = files.reduce((sum, f) => sum + new TextEncoder().encode(f.data).length, 0);
+
+  const fmtKB = (bytes: number) =>
+    bytes < 1024
+      ? `${bytes} B`
+      : `${(bytes / 1024).toFixed(1)} KB`;
 
   return (
     <div
@@ -108,7 +115,7 @@ export function TaskComposer({
               <FileSpreadsheet className="size-4 text-gold shrink-0" />
               <span className="truncate max-w-[180px]">{f.name}</span>
               <span className="gravity-composer-file-size">
-                {(f.data.length / 1024).toFixed(1)} KB
+                {fmtKB(new TextEncoder().encode(f.data).length)}
               </span>
               <button
                 type="button"
@@ -121,7 +128,7 @@ export function TaskComposer({
             </div>
           ))}
           <div className="gravity-composer-file-summary">
-            {files.length} file{files.length > 1 ? "s" : ""} · {(totalSize / 1024).toFixed(1)} KB total
+            {files.length} file{files.length > 1 ? "s" : ""} · {fmtKB(totalSize)} total
           </div>
         </div>
       ) : null}
@@ -145,6 +152,7 @@ export function TaskComposer({
               : "Tell GRAVITY what you want to create…"
           }
           aria-label="Tell GRAVITY what you want to create"
+          autoFocus={autoFocus}
           className="studio-prompt"
         />
       </div>

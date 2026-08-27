@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Instrument_Serif, Inter_Tight, IBM_Plex_Mono } from "next/font/google";
+import { Toaster } from "@/components/studio/toast";
 import "./globals.css";
 
 const instrument = Instrument_Serif({
@@ -33,7 +34,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       lang="en"
       className={`${instrument.variable} ${interTight.variable} ${plexMono.variable}`}
     >
-      <body className="min-h-screen">{children}</body>
+      <body className="min-h-screen">
+        {children}
+        <Toaster />
+      </body>
     </html>
   );
 }

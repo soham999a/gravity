@@ -4,11 +4,24 @@ import * as React from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
-import { ArrowRight, ArrowUpRight, FileText } from "lucide-react";
+import {
+  ArrowRight,
+  ArrowUpRight,
+  CheckCircle2,
+  FileText,
+  Gauge,
+  Layers,
+  Timer,
+  Zap,
+} from "lucide-react";
 import { TaskComposer } from "@/components/studio/TaskComposer";
 import type { CsvFile } from "@/components/studio/TaskComposer";
 import { MissionRun } from "@/components/studio/MissionRun";
 import { RightSideVisualField } from "@/components/gravity/RightSideVisualField";
+import { useGravityUser } from "@/lib/gravity-user";
+import { num } from "@/lib/utils";
+
+const FREE_LIMIT = 250_000;
 
 const CATEGORIES = [
   {
@@ -53,7 +66,17 @@ interface MissionRow {
   id: string;
   prompt: string;
   status: string;
+  totalTokens: number | null;
+  totalLatencyMs: number | null;
   createdAt: string;
+}
+
+function greeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 5) return "Good evening";
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
 }
 
 async function startMission(prompt: string, files?: CsvFile[]): Promise<string> {
@@ -70,28 +93,53 @@ async function startMission(prompt: string, files?: CsvFile[]): Promise<string> 
 
 function HomeContent() {
   const searchParams = useSearchParams();
+  const userName = useGravityUser((state) => state.name);
+  const hydrate = useGravityUser((state) => state.hydrate);
   const [missionId, setMissionId] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const [prefill, setPrefill] = React.useState("");
+  const [focusComposer, setFocusComposer] = React.useState(false);
   const [recent, setRecent] = React.useState<MissionRow[]>([]);
+  const [stats, setStats] = React.useState<{
+    total: number;
+    completed: number;
+    tokensMonth: number;
+    tokensAll: number;
+  } | null>(null);
   const runRef = React.useRef<HTMLDivElement>(null);
   const composerRef = React.useRef<HTMLDivElement>(null);
+  const remountRef = React.useRef(0);
 
-  const loadRecent = React.useCallback(async () => {
+  const loadDashboard = React.useCallback(async () => {
     try {
       const res = await fetch("/api/missions", { cache: "no-store" });
       if (!res.ok) return;
       const json = (await res.json()) as { missions?: MissionRow[] };
-      setRecent(json.missions?.slice(0, 3) ?? []);
+      const missions = json.missions ?? [];
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+      const completed = missions.filter((m) => m.status === "completed");
+      const tokensMonth = missions
+        .filter((m) => new Date(m.createdAt).getTime() >= monthStart)
+        .reduce((sum, m) => sum + (m.totalTokens ?? 0), 0);
+      const tokensAll = missions.reduce((sum, m) => sum + (m.totalTokens ?? 0), 0);
+      setStats({ total: missions.length, completed: completed.length, tokensMonth, tokensAll });
+      setRecent(
+        [...missions]
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+          .slice(0, 4),
+      );
     } catch {
       /* engine offline */
     }
   }, []);
 
   React.useEffect(() => {
-    loadRecent();
-  }, [loadRecent]);
+    hydrate();
+    const timer = window.setTimeout(loadDashboard, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadDashboard, hydrate]);
 
   React.useEffect(() => {
     if (searchParams.get("compose") === "1") {
@@ -125,7 +173,6 @@ function HomeContent() {
 
   const handleFollowUp = async (refinement: string) => {
     if (!missionId) return;
-    // Seed the follow-up with the original task so the engine keeps context.
     let original = "";
     try {
       const res = await fetch(`/api/missions/${missionId}`, { cache: "no-store" });
@@ -146,65 +193,127 @@ function HomeContent() {
   };
 
   const pickExample = (prompt: string) => {
-    setPrefill(prompt === "" ? `example-${Date.now()}` : prompt);
+    const remount = prompt === "" ? `example-${(remountRef.current += 1)}` : prompt;
+    setPrefill(remount);
     setSubmitError(null);
-    if (prompt === "") {
-      setPrefill("");
-    }
+    setFocusComposer(true);
     setMissionId(null);
     requestAnimationFrame(() => {
       composerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
   };
 
+  const displayName = (userName || "").trim() || "creator";
+  const usagePct = stats ? Math.min(100, (stats.tokensMonth / FREE_LIMIT) * 100) : 0;
+
   return (
     <div className="studio-page studio-home">
-      <section className="studio-hero">
-        <div className="studio-hero-grid">
-          <div className="relative z-10 max-w-4xl">
-            <p className="studio-eyebrow">01 / GRAVITY STUDIO</p>
-            <h1 className="studio-hero-title mt-5">
-              Create anything.
-              <br />
-              <span>Let intelligence handle the complexity.</span>
-            </h1>
-            <p className="studio-hero-copy">
-              From a simple request to the right combination of models, algorithms, agents, and
-              tools.
+      <section className="studio-dash-hero">
+        <div className="relative z-10">
+          <p className="studio-eyebrow">STUDIO OVERVIEW</p>
+          <h1 className="studio-hero-title mt-4">
+            {greeting()}, <span className="studio-greet-name">{displayName}.</span>
+          </h1>
+          <p className="studio-hero-copy">
+            State an intent. GRAVITY assembles the right intelligence behind it — the least complex
+            sufficient path, made visible when you want it.
+          </p>
+        </div>
+        <RightSideVisualField />
+      </section>
+
+      <div className="studio-dash-grid">
+        <div className="studio-panel studio-panel-pad">
+          <div className="flex items-center justify-between gap-3">
+            <p className="studio-eyebrow">01 / NEW TASK</p>
+            <span className="studio-meta">START WITH AN INTENT</span>
+          </div>
+          <div ref={composerRef} className="mt-5 scroll-mt-24">
+            <TaskComposer
+              key={prefill || "fresh"}
+              initialValue={prefill}
+              busy={busy}
+              autoFocus={focusComposer}
+              onSubmit={submit}
+            />
+          </div>
+          {submitError ? (
+            <p className="mt-3 border border-danger/30 bg-danger/5 px-4 py-2 text-xs text-[color:var(--color-danger-text)]">
+              {submitError}
             </p>
-            <div ref={composerRef} className="mt-10 max-w-4xl">
-              <TaskComposer key={prefill || "fresh"} initialValue={prefill} busy={busy} onSubmit={submit} />
+          ) : null}
+        </div>
+
+        <div className="studio-panel studio-panel-fill studio-panel-pad">
+          <div className="flex items-center justify-between gap-3">
+            <p className="studio-eyebrow">02 / SNAPSHOT</p>
+            <Link href="/settings" className="studio-text-link">
+              View plan
+            </Link>
+          </div>
+          <div className="studio-stat-grid mt-5">
+            <StatCard
+              label="TASKS RUN"
+              icon={<Layers className="size-4" />}
+              value={stats ? num(stats.total) : null}
+              foot="LIFETIME"
+            />
+            <StatCard
+              label="COMPLETED"
+              icon={<CheckCircle2 className="size-4" />}
+              value={stats ? num(stats.completed) : null}
+              foot="DELIVERED TO YOU"
+            />
+            <StatCard
+              label="SUCCESS RATE"
+              icon={<Gauge className="size-4" />}
+              value={stats && stats.total > 0 ? `${Math.round((stats.completed / stats.total) * 100)}%` : stats ? "—" : null}
+              foot="OF ALL RUNS"
+              metric={stats && stats.total > 0 && stats.completed / stats.total >= 0.8 ? "ok" : undefined}
+            />
+            <StatCard
+              label="TOKENS / MONTH"
+              icon={<Timer className="size-4" />}
+              value={stats ? num(stats.tokensMonth) : null}
+              foot={`OF ${FREE_LIMIT.toLocaleString()} ALLOWED`}
+              metric={stats && usagePct < 70 ? "ok" : "warn"}
+            />
+          </div>
+
+          <div className="studio-usage mt-4">
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="studio-meta">FREE PLAN · THIS MONTH</p>
+              <p className="studio-meta">{Math.round(usagePct)}%</p>
             </div>
-            {submitError ? (
-              <p className="mt-3 border border-danger/30 bg-danger/5 px-4 py-2 text-xs text-[color:var(--color-danger-text)]">
-                {submitError}
-              </p>
-            ) : null}
-            <div className="mt-4 flex items-center gap-3">
-              <span className="status-dot" />
+            <div className="studio-usage-meter">
+              <div
+                className={`studio-usage-fill ${usagePct < 70 ? "" : "studio-usage-fill-high"}`}
+                style={{ width: `${usagePct}%` }}
+              />
+            </div>
+            <div className="studio-usage-row">
               <span className="studio-meta">
-                Start with an intent. GRAVITY decides what kind of intelligence belongs behind it.
+                {stats ? `${num(stats.tokensMonth)} / ${num(FREE_LIMIT)}` : "—"}
+              </span>
+              <span className="studio-meta flex items-center gap-1.5">
+                <Zap className="size-3 text-gold" />
+                UPGRADE FOR 10× MORE
               </span>
             </div>
           </div>
-          <RightSideVisualField />
         </div>
-      </section>
+      </div>
 
       <div ref={runRef}>
         {missionId ? (
-          <MissionRun
-            missionId={missionId}
-            onFollowUp={handleFollowUp}
-            onRetry={handleRetry}
-          />
+          <MissionRun missionId={missionId} onFollowUp={handleFollowUp} onRetry={handleRetry} />
         ) : null}
       </div>
 
       <section className="studio-section studio-contrast-band studio-bone-band">
         <div className="flex flex-wrap items-end justify-between gap-6">
           <div>
-            <p className="studio-eyebrow">02 / EXPLORE</p>
+            <p className="studio-eyebrow">03 / STARTING POINTS</p>
             <h2 className="studio-section-title mt-3">
               A task surface,
               <br />
@@ -239,35 +348,51 @@ function HomeContent() {
       <section className="studio-section-borderless mt-16">
         <div className="flex flex-wrap items-end justify-between gap-6">
           <div>
-            <p className="studio-eyebrow">03 / RECENT PROJECTS</p>
+            <p className="studio-eyebrow">04 / RECENT PROJECTS</p>
             <h2 className="studio-section-title mt-3">Keep the thread.</h2>
           </div>
           <Link href="/projects" className="studio-text-link">
             View all projects <ArrowRight className="size-3.5" />
           </Link>
         </div>
-        {recent.length > 0 ? (
-          <div className="mt-8 grid gap-3 lg:grid-cols-3">
-            {recent.map((item) => (
-              <Link key={item.id} href={`/projects/${item.id}`} className="studio-recent-card">
-                <div className="studio-recent-icon">
-                  <FileText className="size-4" />
-                </div>
+
+        {stats === null ? (
+          <div className="studio-list mt-8">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="studio-list-item">
+                <span className="studio-skeleton studio-list-icon" />
                 <div className="min-w-0 flex-1">
-                  <p className="studio-eyebrow">
-                    {item.status.toUpperCase()} ·{" "}
-                    {new Date(item.createdAt).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                    })}
-                  </p>
-                  <p className="mt-2 line-clamp-2 text-sm leading-6 text-[color:var(--color-ivory-dim)]">
-                    {item.prompt}
-                  </p>
+                  <p className="studio-skeleton h-3 w-3/4" />
+                  <p className="studio-skeleton mt-2 h-2 w-1/3" />
                 </div>
-                <ArrowRight className="size-4 shrink-0 opacity-60" />
-              </Link>
+              </div>
             ))}
+          </div>
+        ) : recent.length > 0 ? (
+          <div className="studio-list mt-8">
+            {recent.map((item) => {
+              const done = item.status === "completed";
+              return (
+                <Link key={item.id} href={`/projects/${item.id}`} className="studio-list-item">
+                  <span className="studio-list-icon">
+                    <FileText className="size-4" />
+                  </span>
+                  <div className="studio-list-body">
+                    <p className="studio-list-title">{item.prompt}</p>
+                    <p className="studio-list-meta">
+                      {done ? "COMPLETE" : item.status.toUpperCase()} ·{" "}
+                      {new Date(item.createdAt).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                      })}{" "}
+                      · {new Date(item.createdAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                      {item.totalTokens ? ` · ${item.totalTokens.toLocaleString()} tokens` : ""}
+                    </p>
+                  </div>
+                  <ArrowRight className="size-4 shrink-0 opacity-60" />
+                </Link>
+              );
+            })}
           </div>
         ) : (
           <div className="studio-empty mt-8">
@@ -297,6 +422,35 @@ function HomeContent() {
           Start creating <ArrowRight className="size-3.5" />
         </button>
       </section>
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  icon,
+  value,
+  foot,
+  metric,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  value: string | null;
+  foot: string;
+  metric?: "ok" | "warn";
+}) {
+  return (
+    <div className="studio-stat-card">
+      <div className="studio-stat-label">
+        <span className="studio-eyebrow">{label}</span>
+        <span className="studio-stat-icon">{icon}</span>
+      </div>
+      {value === null ? (
+        <p className="studio-skeleton mt-4 h-8 w-16" />
+      ) : (
+        <p className="studio-stat-value">{value}</p>
+      )}
+      <p className={`studio-stat-foot ${metric ? `studio-stat-metric-${metric}` : ""}`}>{foot}</p>
     </div>
   );
 }

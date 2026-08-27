@@ -30,9 +30,7 @@ export default function ProjectsPage() {
       <div className="flex flex-wrap items-end justify-between gap-6">
         <div>
           <p className="studio-eyebrow">PROJECTS</p>
-          <h1 className="studio-page-title mt-3 font-serif text-[clamp(44px,6vw,80px)] leading-none text-ivory">
-            Keep the thread.
-          </h1>
+          <h1 className="studio-page-title mt-3">Keep the thread.</h1>
         </div>
         <p className="studio-muted max-w-xs">
           Every task you run becomes a project — result, reasoning, and receipts preserved.
@@ -41,7 +39,18 @@ export default function ProjectsPage() {
 
       <div className="mt-12">
         {missions === null ? (
-          <p className="studio-eyebrow">LOADING…</p>
+          <div className="grid grid-cols-1 gap-px border border-border md:grid-cols-2 xl:grid-cols-3">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="studio-category-card flex flex-col">
+                <p className="studio-skeleton h-3 w-8" />
+                <p className="studio-skeleton mt-8 h-4 w-full" />
+                <p className="studio-skeleton mt-3 h-4 w-2/3" />
+                <div className="mt-auto pt-7">
+                  <p className="studio-skeleton h-6 w-24" />
+                </div>
+              </div>
+            ))}
+          </div>
         ) : missions.length === 0 ? (
           <div className="studio-empty">
             <FileText className="size-5 text-gold" />

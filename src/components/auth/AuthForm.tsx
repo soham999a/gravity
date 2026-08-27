@@ -1,17 +1,22 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+import { Eye, EyeOff } from "lucide-react";
+import { toast } from "@/components/studio/toast";
 
 export function AuthForm({ mode = "login" }: { mode?: "login" | "signup" }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "/";
+const isNewAccount = mode === "signup";
 
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [showPassword, setShowPassword] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [success, setSuccess] = React.useState<string | null>(null);
@@ -34,11 +39,14 @@ export function AuthForm({ mode = "login" }: { mode?: "login" | "signup" }) {
       const idToken = await userCredential.user.getIdToken();
       document.cookie = `fb-token=${idToken}; path=/; max-age=3600; SameSite=Lax`;
 
-      if (mode === "signup") {
-        setSuccess("Account created! Redirecting…");
-      }
+if (mode === "signup") {
+          setSuccess("Account created! Setting you up…");
+          toast("Welcome to GRAVITY", "Let's set up your studio in a few seconds.", "success");
+        } else {
+          toast("Signed in", `Welcome back${email ? `, ${email.split("@")[0]}` : ""}.`);
+        }
 
-      router.replace(next);
+        router.replace(isNewAccount ? "/onboarding" : next);
     } catch (err: unknown) {
       const code = (err as { code?: string }).code;
       if (code === "auth/user-not-found") setError("No account found with this email.");
@@ -118,16 +126,26 @@ export function AuthForm({ mode = "login" }: { mode?: "login" | "signup" }) {
             </div>
             <div className="auth-field">
               <label className="auth-label">Password</label>
-              <input
-                type="password"
-                required
-                minLength={6}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="auth-input"
-                autoComplete={mode === "login" ? "current-password" : "new-password"}
-              />
+              <div className="auth-input-wrap">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  required
+                  minLength={6}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="auth-input"
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((s) => !s)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  className="auth-input-toggle"
+                >
+                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
             </div>
             <button
               type="submit"
@@ -149,12 +167,12 @@ export function AuthForm({ mode = "login" }: { mode?: "login" | "signup" }) {
             {mode === "login" ? (
               <>
                 Don&apos;t have an account?{" "}
-                <a href="/signup" className="auth-link">Sign up</a>
+                <Link href="/signup" className="auth-link">Sign up</Link>
               </>
             ) : (
               <>
                 Already have an account?{" "}
-                <a href="/login" className="auth-link">Sign in</a>
+                <Link href="/login" className="auth-link">Sign in</Link>
               </>
             )}
           </div>

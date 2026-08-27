@@ -5,12 +5,14 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut as firebaseSignOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+import { useGravityUser } from "@/lib/gravity-user";
 import { ArrowUpRight, LogOut, Menu, X } from "lucide-react";
 
 const NAV_ITEMS = [
   { label: "Home", href: "/" },
   { label: "New task", href: "/?compose=1" },
   { label: "Projects", href: "/projects" },
+  { label: "Settings", href: "/settings" },
   {
     label: "Technical architecture",
     href: "https://gravity-gules-sigma.vercel.app/",
@@ -23,15 +25,21 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [userEmail, setUserEmail] = React.useState<string | null>(null);
-
-  React.useEffect(() => setOpen(false), [pathname]);
+  const userName = useGravityUser((state) => state.name);
+  const hydrate = useGravityUser((state) => state.hydrate);
 
   React.useEffect(() => {
+    const timer = window.setTimeout(() => setOpen(false), 0);
+    return () => window.clearTimeout(timer);
+  }, [pathname]);
+
+  React.useEffect(() => {
+    hydrate();
     const unsub = onAuthStateChanged(auth, (user) => {
       setUserEmail(user?.email ?? null);
     });
     return () => unsub();
-  }, []);
+  }, [hydrate]);
 
   const signOut = async () => {
     try {
@@ -43,9 +51,10 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
     router.replace("/login");
   };
 
-  const initials = userEmail
-    ? userEmail.slice(0, 2).toUpperCase()
-    : "GX";
+  const displayName = userEmail ? (userEmail.split("@")[0] ?? "") : "";
+  const initials = (userName || displayName || "GX")
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
     <div className="studio-app min-h-screen">
@@ -74,9 +83,9 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
           </div>
           {userEmail ? (
             <>
-              <div className="studio-avatar" title={userEmail}>
+              <Link href="/settings" className="studio-avatar" title={userEmail}>
                 {initials}
-              </div>
+              </Link>
               <button
                 type="button"
                 onClick={signOut}
@@ -95,58 +104,56 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <div className={`studio-nav-panel ${open ? "studio-nav-panel-open" : ""}`}>
-        {open ? (
-          <div className="studio-nav-panel-inner">
-            <div className="studio-nav-intro">
-              <p className="studio-nav-copy">Simplex: simple design of complexity.</p>
-            </div>
-            <nav aria-label="Studio navigation" className="studio-nav-container">
-              <div className="studio-nav-grid">
-                {NAV_ITEMS.map((item, index) => {
-                  const active =
-                    !item.external &&
-                    (item.href === "/"
-                      ? pathname === "/"
-                      : pathname.startsWith(item.href.split("?")[0]) && item.href !== "/?compose=1");
-                  const content = (
-                    <>
-                      <span className="studio-nav-number">{String(index + 1).padStart(2, "0")}</span>
-                      <span>{item.label}</span>
-                      {item.external ? (
-                        <ArrowUpRight className="ml-auto size-4" />
-                      ) : null}
-                    </>
-                  );
-                  return item.external ? (
-                    <a
-                      key={item.label}
-                      href={item.href}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={() => setOpen(false)}
-                      className="studio-nav-link"
-                    >
-                      {content}
-                    </a>
-                  ) : (
-                    <Link
-                      key={item.label}
-                      href={item.href}
-                      onClick={() => setOpen(false)}
-                      aria-current={active ? "page" : undefined}
-                      className={`studio-nav-link ${active ? "studio-nav-link-active" : ""}`}
-                    >
-                      {content}
-                    </Link>
-                  );
-                })}
-              </div>
-            </nav>
-            <p className="studio-nav-note">
-              Choose a surface. GRAVITY routes the work to the right intelligence behind it.
-            </p>
+        <div className="studio-nav-panel-inner">
+          <div className="studio-nav-intro">
+            <p className="studio-nav-copy">Simplex: simple design of complexity.</p>
           </div>
-        ) : null}
+          <nav aria-label="Studio navigation" className="studio-nav-container">
+            <div className="studio-nav-grid">
+              {NAV_ITEMS.map((item, index) => {
+                const active =
+                  !item.external &&
+                  (item.href === "/"
+                    ? pathname === "/"
+                    : pathname.startsWith(item.href.split("?")[0]) && item.href !== "/?compose=1");
+                const content = (
+                  <>
+                    <span className="studio-nav-number">{String(index + 1).padStart(2, "0")}</span>
+                    <span>{item.label}</span>
+                    {item.external ? (
+                      <ArrowUpRight className="ml-auto size-4" />
+                    ) : null}
+                  </>
+                );
+                return item.external ? (
+                  <a
+                    key={item.label}
+                    href={item.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={() => setOpen(false)}
+                    className="studio-nav-link"
+                  >
+                    {content}
+                  </a>
+                ) : (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    onClick={() => setOpen(false)}
+                    aria-current={active ? "page" : undefined}
+                    className={`studio-nav-link ${active ? "studio-nav-link-active" : ""}`}
+                  >
+                    {content}
+                  </Link>
+                );
+              })}
+            </div>
+          </nav>
+          <p className="studio-nav-note">
+            Choose a surface. GRAVITY routes the work to the right intelligence behind it.
+          </p>
+        </div>
       </div>
 
       <main className="studio-main">{children}</main>
