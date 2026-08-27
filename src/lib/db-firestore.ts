@@ -209,12 +209,15 @@ export async function updateMission(id: string, data: Partial<MissionDoc>): Prom
 export async function listMissions(tenantId: string, limit = 50): Promise<MissionDoc[]> {
   if (useFirestore()) {
     try {
-      const snap = await col("missions")
-        .where("tenantId", "==", tenantId)
-        .orderBy("createdAt", "desc")
-        .limit(limit)
-        .get();
-      return snap.docs.map((d: any) => ({ id: d.id, ...d.data() } as MissionDoc));
+      // Equality-only query (no orderBy) to avoid requiring a composite index.
+      // Sort + slice client-side instead.
+      const snap = await col("missions").where("tenantId", "==", tenantId).get();
+      return snap.docs
+        .map((d: any) => ({ id: d.id, ...d.data() } as MissionDoc))
+        .sort((a: any, b: any) =>
+          String(b.createdAt).localeCompare(String(a.createdAt)),
+        )
+        .slice(0, limit);
     } catch (err) {
       console.warn("[db] Firestore missions.list failed:", String(err).slice(0, 120));
     }
