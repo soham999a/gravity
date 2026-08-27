@@ -31,7 +31,6 @@ export function AuthForm({ mode = "login" }: { mode?: "login" | "signup" }) {
         userCredential = await signInWithEmailAndPassword(auth, email, password);
       }
 
-      // Get the ID token and set it as a cookie for middleware
       const idToken = await userCredential.user.getIdToken();
       document.cookie = `fb-token=${idToken}; path=/; max-age=3600; SameSite=Lax`;
 
@@ -54,83 +53,113 @@ export function AuthForm({ mode = "login" }: { mode?: "login" | "signup" }) {
   };
 
   return (
-    <div className="w-full max-w-sm">
-      <h1 className="font-serif text-3xl text-[var(--color-ivory)]" style={{ fontFamily: "var(--font-serif)" }}>
-        {mode === "login" ? "Welcome back" : "Create your account"}
-      </h1>
-      <p className="mt-3 text-sm text-[var(--color-muted-foreground)]">
-        {mode === "login"
-          ? "Sign in to access GRAVITY Studio."
-          : "Get started with GRAVITY — free tier included."}
-      </p>
-
-      {error ? (
-        <div className="mt-5 rounded border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-300">
-          {error}
+    <div className="auth-container">
+      <div className="auth-left">
+        <div className="auth-brand">
+          <div className="auth-mark">G</div>
+          <div className="auth-wordmark">GRAVITY</div>
         </div>
-      ) : null}
-
-      {success ? (
-        <div className="mt-5 rounded border border-green-800 bg-green-950/40 px-4 py-3 text-sm text-green-300">
-          {success}
+        <h1 className="auth-headline">
+          Intelligence,<br />assembled.
+        </h1>
+        <p className="auth-tagline">
+          State an intent. GRAVITY assembles the right intelligence behind it.
+        </p>
+        <div className="auth-features">
+          <div className="auth-feature">
+            <span className="auth-feature-dot" />
+            <span>Multi-model AI pipeline</span>
+          </div>
+          <div className="auth-feature">
+            <span className="auth-feature-dot" />
+            <span>Zero-cost statistical engine</span>
+          </div>
+          <div className="auth-feature">
+            <span className="auth-feature-dot" />
+            <span>Decision-ready outputs</span>
+          </div>
         </div>
-      ) : null}
+      </div>
 
-      <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-5">
-        <div>
-          <label className="mb-1.5 block text-[10px] uppercase tracking-[0.17em] text-[var(--color-muted-foreground)]" style={{ fontFamily: "var(--font-mono)" }}>
-            Email
-          </label>
-          <input
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            className="w-full border border-[var(--color-border)] bg-transparent px-3 py-2.5 text-sm text-[var(--color-ivory)] outline-none transition focus:border-[var(--color-gold)]"
-          />
-        </div>
-        <div>
-          <label className="mb-1.5 block text-[10px] uppercase tracking-[0.17em] text-[var(--color-muted-foreground)]" style={{ fontFamily: "var(--font-mono)" }}>
-            Password
-          </label>
-          <input
-            type="password"
-            required
-            minLength={6}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            className="w-full border border-[var(--color-border)] bg-transparent px-3 py-2.5 text-sm text-[var(--color-ivory)] outline-none transition focus:border-[var(--color-gold)]"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={busy}
-          className="mt-2 border border-[var(--color-gold)] bg-transparent px-4 py-2.5 text-[10px] uppercase tracking-[0.17em] text-[var(--color-gold)] transition hover:bg-[var(--color-gold)] hover:text-[var(--color-void)] disabled:opacity-40"
-          style={{ fontFamily: "var(--font-mono)" }}
-        >
-          {busy ? "Working…" : mode === "login" ? "Sign in" : "Create account"}
-        </button>
-      </form>
+      <div className="auth-right">
+        <div className="auth-card">
+          <div className="auth-card-kicker">
+            {mode === "login" ? "Sign in" : "Get started"}
+          </div>
+          <h2 className="auth-card-title">
+            {mode === "login" ? "Welcome back" : "Create your account"}
+          </h2>
+          <p className="auth-card-subtitle">
+            {mode === "login"
+              ? "Enter your credentials to access GRAVITY Studio."
+              : "Free tier included. No credit card required."}
+          </p>
 
-      <p className="mt-6 text-center text-xs text-[var(--color-muted-foreground)]">
-        {mode === "login" ? (
-          <>
-            Don&apos;t have an account?{" "}
-            <a href="/signup" className="text-[var(--color-gold)] underline underline-offset-2">
-              Sign up
-            </a>
-          </>
-        ) : (
-          <>
-            Already have an account?{" "}
-            <a href="/login" className="text-[var(--color-gold)] underline underline-offset-2">
-              Sign in
-            </a>
-          </>
-        )}
-      </p>
+          {error && (
+            <div className="auth-error">{error}</div>
+          )}
+
+          {success && (
+            <div className="auth-success">{success}</div>
+          )}
+
+          <form onSubmit={handleSubmit} className="auth-form">
+            <div className="auth-field">
+              <label className="auth-label">Email</label>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="auth-input"
+                autoComplete="email"
+              />
+            </div>
+            <div className="auth-field">
+              <label className="auth-label">Password</label>
+              <input
+                type="password"
+                required
+                minLength={6}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className="auth-input"
+                autoComplete={mode === "login" ? "current-password" : "new-password"}
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={busy}
+              className="auth-button"
+            >
+              {busy ? (
+                <span className="auth-button-loading">
+                  <span className="auth-spinner" />
+                  Working…
+                </span>
+              ) : (
+                mode === "login" ? "Sign in" : "Create account"
+              )}
+            </button>
+          </form>
+
+          <div className="auth-switch">
+            {mode === "login" ? (
+              <>
+                Don&apos;t have an account?{" "}
+                <a href="/signup" className="auth-link">Sign up</a>
+              </>
+            ) : (
+              <>
+                Already have an account?{" "}
+                <a href="/login" className="auth-link">Sign in</a>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

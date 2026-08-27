@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Instrument_Serif, Inter_Tight, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
-import { StudioShell } from "@/components/studio/StudioShell";
 
 const instrument = Instrument_Serif({
   subsets: ["latin"],
@@ -34,9 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       lang="en"
       className={`${instrument.variable} ${interTight.variable} ${plexMono.variable}`}
     >
-      <body className="min-h-screen">
-        <StudioShell>{children}</StudioShell>
-      </body>
+      <body className="min-h-screen">{children}</body>
     </html>
   );
 }
