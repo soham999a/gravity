@@ -217,8 +217,15 @@
 .studio-hero {
   position: relative;
   overflow: hidden;
-  min-height: 620px;
-  padding: clamp(48px, 9vw, 120px) 0 72px;
+  min-height: 540px;
+  padding: clamp(22px, 4vw, 48px) 0 52px;
+}
+
+.studio-hero-composer {
+  position: relative;
+  z-index: 4;
+  width: min(100%, 1180px);
+  margin-top: clamp(22px, 3.5vh, 38px);
 }
 
 .studio-hero-grid {

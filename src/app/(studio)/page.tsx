@@ -227,15 +227,16 @@ function HomeContent() {
               From a simple request to the right combination of models, algorithms, agents, and
               tools — the least complex sufficient path, made visible when you want it.
             </p>
-            <div ref={composerRef} className="mt-9 max-w-4xl scroll-mt-24">
-              <TaskComposer
-                key={prefill || "fresh"}
-                initialValue={prefill}
-                busy={busy}
-                autoFocus={focusComposer}
-                onSubmit={submit}
-              />
-            </div>
+          </div>
+
+          <div ref={composerRef} className="studio-hero-composer scroll-mt-24">
+            <TaskComposer
+              key={prefill || "fresh"}
+              initialValue={prefill}
+              busy={busy}
+              autoFocus={focusComposer}
+              onSubmit={submit}
+            />
             {submitError ? (
               <p className="mt-3 border border-danger/30 bg-danger/5 px-4 py-2 text-xs text-[color:var(--color-danger-text)]">
                 {submitError}
@@ -248,8 +249,9 @@ function HomeContent() {
               </span>
             </div>
           </div>
+
+          <RightSideVisualField />
         </div>
-        <RightSideVisualField />
       </section>
 
       <div ref={runRef}>
