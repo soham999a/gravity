@@ -717,12 +717,6 @@
   width: 20px;
   height: 20px;
 }
-.auth-mark-img {
-  display: block;
-  width: 36px;
-  height: 36px;
-  object-fit: contain;
-}
 .studio-avatar {
   display: grid;
   height: 30px;
@@ -1483,304 +1477,697 @@
   }
 }
 
-/* --- Auth pages --- */
-.auth-page {
-  background: var(--color-void);
-}
+/* --- Sign-in / sign-up: bone intelligence field + black Studio access surface --- */
 
-.auth-container {
-  min-height: 100vh;
+.gravity-signin-page {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  min-height: 100svh;
+  grid-template-columns: minmax(0, 1fr) minmax(460px, 1fr);
+  background: #080808;
+  color: var(--color-ivory);
 }
-
-@media (max-width: 768px) {
-  .auth-container {
-    grid-template-columns: 1fr;
-  }
-  .auth-left {
-    display: none !important;
-  }
-}
-
-.auth-left {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 64px 80px;
-  background: var(--color-deep);
-  border-right: 1px solid var(--color-border);
+.gravity-signin-intro {
   position: relative;
+  min-height: 100svh;
   overflow: hidden;
+  background: #eee9df;
+  color: #151513;
 }
-
-.auth-left::before {
-  content: "";
+.gravity-signin-intro-inner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  min-height: 100svh;
+  flex-direction: column;
+  padding: clamp(32px, 6vw, 88px) clamp(28px, 7vw, 116px);
+}
+.gravity-signin-brand {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 20px;
+  color: #161614;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.3em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+.gravity-signin-brand-mark {
+  display: grid;
+  height: 58px;
+  width: 58px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #8d7b22;
+  background: #11110f;
+  box-shadow:
+    0 0 0 4px rgba(141, 123, 34, 0.08),
+    0 10px 28px rgba(45, 38, 8, 0.12);
+}
+.gravity-signin-brand-mark img {
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}
+.gravity-signin-copy {
+  max-width: 520px;
+  margin-top: auto;
+  margin-bottom: auto;
+  padding: clamp(72px, 13vh, 160px) 0 clamp(40px, 8vh, 92px);
+}
+.gravity-signin-kicker {
+  color: var(--color-gold);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+.gravity-signin-intro .gravity-signin-kicker {
+  color: #786b1b;
+}
+.gravity-signin-copy h1 {
+  max-width: 490px;
+  margin-top: 26px;
+  color: #1a1916;
+  font-family: var(--font-serif);
+  font-size: clamp(3.75rem, 6.8vw, 7.2rem);
+  font-weight: 400;
+  letter-spacing: -0.055em;
+  line-height: 0.89;
+}
+.gravity-signin-description {
+  max-width: 330px;
+  margin-top: 34px;
+  color: #77736a;
+  font-size: 15px;
+  line-height: 1.65;
+}
+.gravity-signin-features {
+  display: grid;
+  gap: 15px;
+  margin-top: 56px;
+  color: #666259;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  list-style: none;
+}
+.gravity-signin-features li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.gravity-signin-features svg {
+  height: 11px;
+  width: 11px;
+  color: #9b8a21;
+  stroke-width: 1.5;
+}
+.gravity-signin-art {
   position: absolute;
-  top: -200px;
-  right: -200px;
-  width: 500px;
-  height: 500px;
-  background: radial-gradient(circle, rgba(184,150,12,0.04) 0%, transparent 70%);
+  right: -3%;
+  bottom: -2%;
+  z-index: 1;
+  width: min(72%, 720px);
+  color: #998a2e;
+  opacity: 0.78;
   pointer-events: none;
 }
-
-.auth-brand {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 48px;
-}
-
-.auth-mark {
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--color-gold);
-  display: grid;
-  place-items: center;
-  font-family: var(--font-serif);
-  font-size: 16px;
-  color: var(--color-gold);
-}
-
-.auth-wordmark {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--color-ivory);
-}
-
-.auth-headline {
-  font-family: var(--font-serif);
-  font-size: clamp(36px, 4vw, 52px);
-  font-weight: 400;
-  line-height: 1.1;
-  color: var(--color-ivory);
-  margin-bottom: 20px;
-}
-
-.auth-headline em {
-  color: var(--color-gold);
-  font-style: italic;
-}
-
-.auth-tagline {
-  font-size: 14px;
-  color: var(--color-muted-foreground);
-  line-height: 1.6;
-  max-width: 340px;
-  margin-bottom: 48px;
-}
-
-.auth-features {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.auth-feature {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.05em;
-  color: var(--color-ivory-dim);
-}
-
-.auth-feature-dot {
-  width: 4px;
-  height: 4px;
-  background: var(--color-gold);
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.auth-right {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 48px 32px;
-}
-
-.auth-card {
+.gravity-signin-art svg {
+  display: block;
+  height: auto;
   width: 100%;
-  max-width: 400px;
 }
-
-.auth-card-kicker {
+.gravity-signin-art-grid line {
+  stroke: #95872d;
+  stroke-dasharray: 1 11;
+  stroke-width: 0.8;
+  opacity: 0.18;
+}
+.gravity-signin-art-forms path {
+  fill: none;
+  stroke: url(#signin-gold-line);
+  stroke-dasharray: 1 9;
+  stroke-linecap: round;
+  stroke-width: 1.35;
+  animation: signin-form-drift 13s ease-in-out infinite alternate;
+}
+.gravity-signin-art-forms path:nth-child(2) {
+  animation-delay: -4s;
+  animation-duration: 17s;
+}
+.gravity-signin-art-forms path:nth-child(3) {
+  animation-delay: -7s;
+  animation-duration: 20s;
+}
+.gravity-signin-art-forms path:nth-child(4) {
+  animation-delay: -9s;
+  animation-duration: 15s;
+}
+.gravity-signin-art-orbit {
+  stroke-dasharray: 1 7 !important;
+  stroke-width: 1.7 !important;
+  opacity: 0.82;
+  animation: signin-orbit-spin 26s linear infinite !important;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.gravity-signin-art-orbit-reverse {
+  animation-direction: reverse !important;
+  animation-duration: 34s !important;
+  opacity: 0.48;
+}
+.gravity-signin-art-glow {
+  opacity: 0.75;
+  animation: signin-glow-pulse 7s ease-in-out infinite alternate;
+}
+.gravity-signin-art-connectors line {
+  stroke: #9a8a2c;
+  stroke-dasharray: 1 8;
+  stroke-width: 0.9;
+  opacity: 0.42;
+  animation: signin-connector-flow 9s linear infinite;
+}
+.gravity-signin-art-connectors line:nth-child(3n) {
+  animation-delay: -3s;
+}
+.gravity-signin-art-nodes circle {
+  fill: #a2922e;
+  opacity: 0.3;
+  animation: signin-node-pulse 3.5s ease-in-out var(--node-delay) infinite alternate;
+}
+.gravity-signin-art-nodes circle:nth-child(5n) {
+  fill: #c2ac39;
+  opacity: 0.78;
+}
+.gravity-signin-art-labels text {
+  fill: #8e8029;
   font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.17em;
+  font-size: 8px;
+  letter-spacing: 0.18em;
+  opacity: 0.75;
+}
+.gravity-signin-art > p {
+  position: absolute;
+  right: 5%;
+  bottom: 5%;
+  color: #8c7d28;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--color-gold);
-  margin-bottom: 16px;
 }
-
-.auth-card-title {
-  font-family: var(--font-serif);
-  font-size: 28px;
-  font-weight: 400;
+.gravity-signin-form-side {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  min-height: 100svh;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(36px, 8vw, 120px) clamp(30px, 11vw, 190px);
+  background: #080808;
   color: var(--color-ivory);
-  margin-bottom: 8px;
 }
-
-.auth-card-subtitle {
-  font-size: 13px;
+.gravity-signin-grid-field {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.72;
+}
+.gravity-signin-grid-field::before,
+.gravity-signin-grid-field::after {
+  position: absolute;
+  content: "";
+  pointer-events: none;
+}
+.gravity-signin-grid-field::before {
+  inset: 8% 8% 8% 7%;
+  border: 1px solid rgba(190, 162, 49, 0.12);
+  background-image:
+    linear-gradient(rgba(190, 162, 49, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(190, 162, 49, 0.08) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: linear-gradient(90deg, transparent, black 22%, black 78%, transparent);
+  animation: signin-grid-breathe 9s ease-in-out infinite alternate;
+}
+.gravity-signin-grid-field::after {
+  top: 15%;
+  right: 18%;
+  height: 280px;
+  width: 280px;
+  border: 1px solid rgba(190, 162, 49, 0.2);
+  box-shadow:
+    0 0 0 42px rgba(190, 162, 49, 0.025),
+    0 0 0 84px rgba(190, 162, 49, 0.018);
+  transform: rotate(45deg);
+  animation: signin-grid-diamond 18s linear infinite;
+}
+.gravity-signin-grid-field svg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  height: 100%;
+  width: 100%;
+  min-width: 680px;
+  transform: translate(-50%, -50%);
+}
+.gravity-signin-grid-lines line {
+  stroke: rgba(190, 162, 49, 0.22);
+  stroke-dasharray: 1 9;
+  stroke-width: 0.8;
+}
+.gravity-signin-grid-squares rect {
+  fill: none;
+  stroke: url(#signin-grid-gold);
+  stroke-width: 1.2;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: signin-grid-square-pulse 8s ease-in-out infinite alternate;
+}
+.gravity-signin-grid-squares rect:nth-child(2) {
+  animation-delay: -2s;
+  opacity: 0.8;
+}
+.gravity-signin-grid-squares rect:nth-child(3) {
+  animation-delay: -4s;
+  opacity: 0.9;
+}
+.gravity-signin-grid-squares rect:nth-child(4) {
+  animation-delay: -6s;
+}
+.gravity-signin-grid-dots circle {
+  fill: var(--color-gold);
+  opacity: 0.42;
+  animation: signin-grid-dot-pulse 4s ease-in-out var(--grid-dot-delay) infinite alternate;
+}
+.gravity-signin-grid-dots circle:nth-child(4) {
+  opacity: 0.92;
+}
+.gravity-signin-grid-orbit {
+  fill: none;
+  stroke: rgba(190, 162, 49, 0.34);
+  stroke-dasharray: 1 8;
+  stroke-width: 1.2;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: signin-grid-orbit-spin 32s linear infinite;
+}
+.gravity-signin-grid-orbit-reverse {
+  animation-direction: reverse;
+  animation-duration: 42s;
+  opacity: 0.58;
+}
+.gravity-signin-grid-field > span {
+  position: absolute;
+  right: 10%;
+  bottom: 7%;
+  color: rgba(190, 162, 49, 0.52);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.gravity-signin-form-wrap {
+  width: min(100%, 470px);
+  margin: 0 auto;
+}
+.gravity-signin-panel-brand {
+  display: block;
+  margin-bottom: clamp(48px, 8vh, 88px);
+}
+.gravity-signin-panel-wordmark {
+  display: block;
+  color: var(--color-gold);
+  font-family: var(--font-serif);
+  font-size: clamp(2.5rem, 5vw, 4.25rem);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  line-height: 0.9;
+  text-transform: uppercase;
+  text-shadow: 0 0 24px rgba(183, 154, 38, 0.18);
+}
+.gravity-signin-panel-brand-line {
+  display: block;
+  margin-top: 18px;
+  width: min(100%, 220px);
+  height: 1px;
+  background: linear-gradient(90deg, var(--color-gold), transparent);
+  opacity: 0.72;
+}
+.gravity-signin-form-heading h2 {
+  margin-top: 24px;
+  color: var(--color-ivory);
+  font-family: var(--font-serif);
+  font-size: clamp(2.15rem, 3.3vw, 3.5rem);
+  font-weight: 400;
+  letter-spacing: -0.045em;
+  line-height: 0.95;
+}
+.gravity-signin-form-heading > p:last-child {
+  margin-top: 22px;
   color: var(--color-muted-foreground);
-  margin-bottom: 32px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.gravity-signin-error {
+  margin-top: 26px;
+  border: 1px solid rgba(143, 74, 74, 0.4);
+  background: rgba(107, 26, 26, 0.12);
+  padding: 13px 16px;
+  font-size: 13px;
   line-height: 1.5;
+  color: #d98f8f;
 }
-
-.auth-error {
-  border: 1px solid rgba(143, 74, 74, 0.3);
-  background: rgba(107, 26, 26, 0.15);
-  border-radius: 4px;
-  padding: 12px 16px;
-  margin-bottom: 24px;
+.gravity-signin-success {
+  margin-top: 26px;
+  border: 1px solid rgba(74, 143, 106, 0.4);
+  background: rgba(26, 107, 60, 0.1);
+  padding: 13px 16px;
   font-size: 13px;
-  color: var(--color-danger-text);
-}
-
-.auth-success {
-  border: 1px solid rgba(74, 143, 106, 0.3);
-  background: rgba(26, 107, 60, 0.15);
-  border-radius: 4px;
-  padding: 12px 16px;
-  margin-bottom: 24px;
-  font-size: 13px;
+  line-height: 1.5;
   color: var(--color-success-text);
 }
-
-.auth-form {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.auth-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.auth-label {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.17em;
-  text-transform: uppercase;
-  color: var(--color-muted-foreground);
-}
-
-.auth-input {
-  width: 100%;
-  border: 1px solid var(--color-border);
-  background: transparent;
-  padding: 12px 14px;
-  font-size: 14px;
-  font-family: var(--font-sans);
-  font-weight: 300;
-  color: var(--color-ivory);
-  outline: none;
-  transition: border-color 0.2s ease;
-  border-radius: 2px;
-}
-
-.auth-input-wrap {
-  position: relative;
-}
-.auth-input-wrap .auth-input {
-  padding-right: 44px;
-}
-.auth-input-toggle {
-  position: absolute;
-  top: 0;
-  right: 0;
+.gravity-signin-form {
   display: grid;
-  height: 100%;
-  width: 44px;
-  place-items: center;
+  gap: 12px;
+  margin-top: 40px;
+}
+.gravity-signin-form > label {
+  margin-top: 12px;
   color: var(--color-muted-foreground);
-  transition: color 0.2s ease;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
 }
-.auth-input-toggle:hover {
+.gravity-signin-form input {
+  min-height: 54px;
+  width: 100%;
+  border: 1px solid rgba(238, 233, 223, 0.15);
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.015);
+  padding: 0 16px;
   color: var(--color-ivory);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  outline: none;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease;
 }
-
-.auth-input::placeholder {
+.gravity-signin-form input::placeholder {
   color: var(--color-ivory-faint);
 }
-
-.auth-input:focus {
+.gravity-signin-form input:focus {
   border-color: var(--color-gold);
+  background: rgba(196, 169, 47, 0.045);
 }
-
-.auth-button {
-  margin-top: 8px;
-  width: 100%;
-  border: 1px solid var(--color-gold);
+.gravity-signin-password-field {
+  position: relative;
+}
+.gravity-signin-password-field input {
+  padding-right: 52px;
+}
+.gravity-signin-password-field button {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  display: grid;
+  height: 28px;
+  width: 28px;
+  place-items: center;
+  border: 0;
   background: transparent;
-  padding: 13px 24px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: var(--color-gold);
+  color: var(--color-muted-foreground);
+  transform: translateY(-50%);
   cursor: pointer;
-  transition: all 0.2s ease;
-  border-radius: 2px;
 }
-
-.auth-button:hover:not(:disabled) {
+.gravity-signin-password-field button:hover {
+  color: var(--color-gold);
+}
+.gravity-signin-password-field svg {
+  height: 16px;
+  width: 16px;
+}
+.gravity-signin-submit {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 18px;
+  border: 1px solid var(--color-gold);
+  border-radius: 0;
+  background: transparent;
+  padding: 0 18px 0 22px;
+  color: var(--color-gold);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  cursor: pointer;
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    transform 180ms ease;
+}
+.gravity-signin-submit:hover:not(:disabled) {
   background: var(--color-gold);
-  color: var(--color-void);
+  color: #10100d;
 }
-
-.auth-button:disabled {
-  opacity: 0.4;
+.gravity-signin-submit:disabled {
+  opacity: 0.55;
   cursor: not-allowed;
 }
-
-.auth-button-loading {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+.gravity-signin-submit svg {
+  height: 16px;
+  width: 16px;
 }
-
-.auth-spinner {
+.gravity-signin-spinner {
   width: 14px;
   height: 14px;
-  border: 1.5px solid var(--color-gold-dim);
-  border-top-color: var(--color-gold);
+  flex-shrink: 0;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
   border-radius: 50%;
-  animation: spin 0.6s linear infinite;
+  animation: gravity-signin-spin 0.6s linear infinite;
 }
-
-@keyframes spin {
+@keyframes gravity-signin-spin {
   to { transform: rotate(360deg); }
 }
-
-.auth-switch {
-  margin-top: 28px;
-  text-align: center;
-  font-size: 13px;
+.gravity-signin-switch {
+  margin-top: 30px;
   color: var(--color-muted-foreground);
+  font-size: 13px;
+  text-align: center;
 }
-
-.auth-link {
+.gravity-signin-switch a {
   color: var(--color-gold);
   text-decoration: underline;
   text-underline-offset: 3px;
-  transition: color 0.15s ease;
 }
-
-.auth-link:hover {
+.gravity-signin-switch a:hover {
   color: var(--color-ivory);
+}
+.gravity-signin-status {
+  position: absolute;
+  right: clamp(30px, 4vw, 62px);
+  bottom: 30px;
+  color: var(--color-ivory-faint);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+}
+.gravity-signin-status span {
+  display: inline-block;
+  height: 5px;
+  width: 5px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--color-gold);
+  box-shadow: 0 0 12px var(--color-gold);
+}
+@keyframes signin-form-drift {
+  from {
+    stroke-dashoffset: 0;
+    transform: translate3d(-4px, 3px, 0);
+  }
+  to {
+    stroke-dashoffset: -92px;
+    transform: translate3d(5px, -4px, 0);
+  }
+}
+@keyframes signin-orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes signin-connector-flow {
+  to {
+    stroke-dashoffset: -72px;
+  }
+}
+@keyframes signin-node-pulse {
+  from {
+    opacity: 0.22;
+    transform: scale(0.82);
+  }
+  to {
+    opacity: 0.88;
+    transform: scale(1.18);
+  }
+}
+@keyframes signin-glow-pulse {
+  from {
+    opacity: 0.3;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 0.85;
+    transform: scale(1.06);
+  }
+}
+@keyframes signin-grid-breathe {
+  from {
+    opacity: 0.35;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 0.85;
+    transform: scale(1.02);
+  }
+}
+@keyframes signin-grid-diamond {
+  to {
+    transform: rotate(405deg);
+  }
+}
+@keyframes signin-grid-square-pulse {
+  from {
+    transform: scale(0.985);
+    opacity: 0.42;
+  }
+  to {
+    transform: scale(1.018);
+    opacity: 0.9;
+  }
+}
+@keyframes signin-grid-dot-pulse {
+  from {
+    transform: scale(0.7);
+    opacity: 0.2;
+  }
+  to {
+    transform: scale(1.35);
+    opacity: 0.9;
+  }
+}
+@keyframes signin-grid-orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 980px) {
+  .gravity-signin-page {
+    grid-template-columns: minmax(0, 0.88fr) minmax(400px, 1.12fr);
+  }
+  .gravity-signin-intro-inner {
+    padding-right: 48px;
+    padding-left: 48px;
+  }
+  .gravity-signin-form-side {
+    padding-right: 48px;
+    padding-left: 48px;
+  }
+  .gravity-signin-art {
+    right: -18%;
+    width: 96%;
+    opacity: 0.55;
+  }
+}
+@media (max-width: 720px) {
+  .gravity-signin-page {
+    display: block;
+  }
+  .gravity-signin-intro,
+  .gravity-signin-form-side {
+    min-height: auto;
+  }
+  .gravity-signin-intro {
+    min-height: 620px;
+  }
+  .gravity-signin-intro-inner {
+    min-height: 620px;
+    padding: 28px 24px 56px;
+  }
+  .gravity-signin-copy {
+    margin-top: 60px;
+    padding: 0;
+  }
+  .gravity-signin-copy h1 {
+    font-size: clamp(3.5rem, 16vw, 5.6rem);
+  }
+  .gravity-signin-description {
+    margin-top: 25px;
+  }
+  .gravity-signin-features {
+    margin-top: 34px;
+  }
+  .gravity-signin-art {
+    right: -18%;
+    bottom: -8%;
+    width: 100%;
+    opacity: 0.42;
+  }
+  .gravity-signin-art > p {
+    display: none;
+  }
+  .gravity-signin-form-side {
+    padding: 72px 24px 96px;
+  }
+  .gravity-signin-status {
+    right: 24px;
+    bottom: 32px;
+  }
+  .gravity-signin-brand {
+    gap: 16px;
+    font-size: 13px;
+  }
+  .gravity-signin-brand-mark {
+    height: 52px;
+    width: 52px;
+  }
+  .gravity-signin-grid-field {
+    opacity: 0.46;
+  }
+  .gravity-signin-grid-field svg {
+    min-width: 520px;
+  }
+  .gravity-signin-grid-field::before {
+    background-size: 58px 58px;
+  }
+  .gravity-signin-panel-brand {
+    margin-bottom: 52px;
+  }
+  .gravity-signin-panel-wordmark {
+    font-size: clamp(2.15rem, 11vw, 3.25rem);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gravity-signin-art-forms path,
+  .gravity-signin-art-orbit,
+  .gravity-signin-art-glow,
+  .gravity-signin-art-connectors line,
+  .gravity-signin-art-nodes circle,
+  .gravity-signin-grid-field::before,
+  .gravity-signin-grid-field::after,
+  .gravity-signin-grid-squares rect,
+  .gravity-signin-grid-dots circle,
+  .gravity-signin-grid-orbit {
+    animation: none;
+  }
 }
 
 /* --- Utility links (detail page) --- */
@@ -2766,7 +3153,7 @@
 .studio-primary-button:active:not(:disabled),
 .studio-secondary-button:active:not(:disabled),
 .studio-danger-button:active:not(:disabled),
-.auth-button:active:not(:disabled) {
+.gravity-signin-submit:active:not(:disabled) {
   transform: translateY(1px);
 }
 .studio-recent-card,
