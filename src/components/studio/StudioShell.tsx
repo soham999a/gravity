@@ -41,12 +41,19 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     if (!open) return;
     let lastY = window.scrollY;
+    let armed = false;
+    const armTimer = window.setTimeout(() => (armed = true), 350);
     const onScroll = () => {
-      if (window.scrollY !== lastY) setOpen(false);
-      lastY = window.scrollY;
+      if (!armed) return;
+      const y = window.scrollY;
+      if (y - lastY > 12) setOpen(false);
+      lastY = y;
     };
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    return () => {
+      window.clearTimeout(armTimer);
+      window.removeEventListener("scroll", onScroll);
+    };
   }, [open]);
 
   React.useEffect(() => {
