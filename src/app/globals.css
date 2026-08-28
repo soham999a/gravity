@@ -1557,8 +1557,12 @@
 }
 .studio-bone-band .studio-eyebrow,
 .studio-bone-band .studio-text-link,
-.studio-bone-band .studio-quote-mark {
+.studio-bone-band .studio-quote-mark,
+.studio-bone-band .studio-quote em {
   color: #7a6510;
+}
+.studio-bone-band .studio-quote {
+  color: #141210;
 }
 .studio-bone-band .studio-muted,
 .studio-bone-band .studio-section-title span {
