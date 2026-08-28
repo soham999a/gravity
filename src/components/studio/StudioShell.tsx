@@ -108,7 +108,7 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
           </button>
           <Link href="/" className="studio-header-brand" aria-label="GRAVITY Studio home">
             <span className="studio-mark">
-              <img src="/logo.jpg" alt="GRAVITY" className="studio-logo-image" />
+              <img src="/gravity-logo-mark-transparent.png" alt="GRAVITY" className="studio-logo-image" />
             </span>
             <span className="studio-wordmark">
               <span className="studio-wordmark-main">GRAVITY</span>
@@ -147,7 +147,7 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
         <div className="studio-nav-panel-inner">
           <div className="studio-nav-intro">
             <span className="studio-nav-logo-frame">
-              <img src="/logo.jpg" alt="GRAVITY" className="studio-nav-logo" />
+              <img src="/gravity-logo-light.png" alt="GRAVITY" className="studio-nav-logo" />
             </span>
             <div className="min-w-0">
               <p className="studio-eyebrow">NEXT-GENERATION ADAPTIVE INTELLIGENCE FRAMEWORK</p>
