@@ -87,6 +87,16 @@
   ::-webkit-scrollbar-thumb {
     background: var(--color-gold-dim);
   }
+
+  ::selection {
+    background: oklch(0.78 0.085 84);
+    color: oklch(0.17 0.01 80);
+  }
+
+  :focus-visible {
+    outline: 1px solid oklch(0.78 0.085 84);
+    outline-offset: 1px;
+  }
 }
 
 @layer components {
@@ -372,7 +382,7 @@
   height: min(78vh, 680px);
   overflow: visible;
   pointer-events: none;
-  opacity: 0.8;
+  opacity: 0.98;
   transform: translateY(-50%);
 }
 
@@ -385,7 +395,7 @@
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  color: rgba(184, 150, 12, 0.38);
+  color: rgba(216, 190, 90, 0.62);
   font-family: var(--font-mono);
   font-size: 8px;
   letter-spacing: 0.14em;
@@ -408,33 +418,33 @@
 }
 
 .right-side-visual-grid line {
-  stroke: rgba(184, 150, 12, 0.06);
+  stroke: rgba(184, 150, 12, 0.12);
   stroke-width: 1;
 }
 
 .right-side-visual-maze path {
   fill: none;
-  stroke: rgba(184, 150, 12, 0.32);
+  stroke: rgba(184, 150, 12, 0.5);
   stroke-dasharray: 2 7;
   stroke-width: 1.15;
   animation: maze-drift 18s linear infinite;
 }
 
 .right-side-visual-maze path:nth-child(2) {
-  stroke: rgba(216, 190, 90, 0.2);
+  stroke: rgba(216, 190, 90, 0.34);
   stroke-dasharray: 1 10;
   animation-duration: 24s;
   animation-direction: reverse;
 }
 
 .right-side-visual-maze path:nth-child(3) {
-  stroke: rgba(184, 150, 12, 0.26);
+  stroke: rgba(184, 150, 12, 0.42);
   animation-duration: 30s;
 }
 
 .right-side-visual-squares rect {
-  fill: rgba(184, 150, 12, 0.03);
-  stroke: rgba(184, 150, 12, 0.28);
+  fill: rgba(184, 150, 12, 0.07);
+  stroke: rgba(184, 150, 12, 0.45);
   stroke-width: 1;
   transform-box: fill-box;
   transform-origin: center;
@@ -461,19 +471,19 @@
   stroke: url(#visual-gold-line);
   stroke-dasharray: 3 8;
   stroke-width: 1.4;
-  opacity: 0.85;
+  opacity: 0.95;
   animation: spiral-draw 18s ease-in-out infinite alternate;
 }
 
 .right-side-visual-axis {
   fill: none;
-  stroke: rgba(184, 150, 12, 0.15);
+  stroke: rgba(184, 150, 12, 0.26);
   stroke-dasharray: 1 9;
   stroke-width: 1;
 }
 
 .right-side-visual-halo {
-  opacity: 0.85;
+  opacity: 0.95;
 }
 
 .right-side-visual-core {
@@ -487,18 +497,18 @@
   stroke: var(--color-gold);
   stroke-dasharray: 1 5;
   stroke-width: 1;
-  opacity: 0.72;
+  opacity: 0.9;
   animation: ring-spin 16s linear infinite;
 }
 
 /* Data → information → knowledge → decision metaphor */
 .right-side-visual-flow {
-  opacity: 0.86;
+  opacity: 0.96;
 }
 
 .right-side-flow-line {
   fill: none;
-  stroke: rgba(184, 150, 12, 0.38);
+  stroke: rgba(184, 150, 12, 0.6);
   stroke-dasharray: 1 6;
   stroke-width: 1;
   animation: flow-line-drift 12s linear infinite;
@@ -541,7 +551,7 @@
 }
 
 .right-side-flow-labels {
-  fill: rgba(216, 190, 90, 0.56);
+  fill: rgba(216, 190, 90, 0.8);
   font-family: var(--font-mono);
   font-size: 7px;
   letter-spacing: 0.1em;
@@ -628,7 +638,7 @@
 @media (max-width: 1100px) {
   .right-side-visual {
     right: clamp(-340px, calc((1440px - 100vw) / 2 - 40px), -40px);
-    opacity: 0.55;
+    opacity: 0.78;
   }
 }
 
@@ -640,7 +650,7 @@
     width: min(100%, 520px);
     height: 340px;
     margin: 28px 0 0 auto;
-    opacity: 0.58;
+    opacity: 0.85;
     transform: none;
   }
 }
@@ -650,7 +660,7 @@
     width: 100%;
     height: 260px;
     margin-top: -14px;
-    opacity: 0.38;
+    opacity: 0.6;
   }
   .right-side-visual-canvas {
     width: 100%;
@@ -706,9 +716,10 @@
   width: 52px;
   flex-shrink: 0;
   place-items: center;
-  overflow: hidden;
-  border: 1px solid var(--color-gold);
-  background: #080808;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  background: transparent;
 }
 .studio-logo-image {
   display: block;
@@ -716,6 +727,7 @@
   width: 100%;
   object-fit: contain;
   object-position: center;
+  transform: none;
 }
 .studio-wordmark {
   display: grid;
@@ -749,6 +761,7 @@
   .studio-mark {
     height: 44px;
     width: 44px;
+    padding: 0;
   }
   .studio-wordmark {
     font-size: 11px;
