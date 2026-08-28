@@ -39,17 +39,6 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   React.useEffect(() => {
-    if (!open) return;
-    let lastY = window.scrollY;
-    const onScroll = () => {
-      if (window.scrollY !== lastY) setOpen(false);
-      lastY = window.scrollY;
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [open]);
-
-  React.useEffect(() => {
     hydrate();
     const unsub = onAuthStateChanged(auth, (user) => {
       setUserEmail(user?.email ?? null);

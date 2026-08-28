@@ -806,12 +806,17 @@
 
 /* --- Full-width collapsible navigation --- */
 .studio-nav-panel {
-  position: relative;
+  position: sticky;
+  top: 72px;
   z-index: 20;
   display: grid;
   grid-template-rows: 0fr;
   border-bottom: 1px solid transparent;
   background: var(--color-deep);
+  max-height: calc(100svh - 72px);
+  overflow-y: auto;
+  scrollbar-color: var(--color-gold) transparent;
+  scrollbar-width: thin;
   transition:
     grid-template-rows 0.28s ease,
     border-color 0.28s ease;
