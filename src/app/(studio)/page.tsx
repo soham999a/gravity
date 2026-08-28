@@ -11,6 +11,7 @@ import {
   FileText,
   Gauge,
   Layers,
+  Sparkles,
   Timer,
   Zap,
 } from "lucide-react";
@@ -71,6 +72,17 @@ function greeting(): string {
   return "Good evening";
 }
 
+function timeAgo(iso: string): string {
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} day${days > 1 ? "s" : ""} ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 async function startMission(prompt: string, files?: CsvFile[]): Promise<string> {
   const res = await fetch("/api/missions", {
     method: "POST",
@@ -116,7 +128,7 @@ function HomeContent() {
   }, [missions, loading]);
 
   const recent = React.useMemo(
-    () => [...missions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 4),
+    () => [...missions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 3),
     [missions],
   );
 
@@ -197,104 +209,48 @@ function HomeContent() {
 
   return (
     <div className="studio-page studio-home">
-      <section className="studio-dash-hero">
-        <div className="relative z-10">
-          <p className="studio-eyebrow">STUDIO OVERVIEW</p>
-          <h1 className="studio-hero-title mt-4">
-            {greeting()}, <span className="studio-greet-name">{displayName}.</span>
-          </h1>
-          <p className="studio-hero-copy">
-            State an intent. GRAVITY assembles the right intelligence behind it — the least complex
-            sufficient path, made visible when you want it.
-          </p>
+      <section className="studio-hero">
+        <div className="studio-hero-grid">
+          <div className="studio-hero-rail">
+            <div className="flex items-center justify-between gap-3">
+              <p className="studio-eyebrow">01 / GRAVITY STUDIO</p>
+              <span className="studio-meta">
+                {greeting().toUpperCase()}, {displayName.toUpperCase()}
+              </span>
+            </div>
+            <h1 className="studio-hero-title mt-6">
+              Create anything.
+              <br />
+              <span>Let intelligence handle the complexity.</span>
+            </h1>
+            <p className="studio-hero-copy">
+              From a simple request to the right combination of models, algorithms, agents, and
+              tools — the least complex sufficient path, made visible when you want it.
+            </p>
+            <div ref={composerRef} className="mt-9 max-w-4xl scroll-mt-24">
+              <TaskComposer
+                key={prefill || "fresh"}
+                initialValue={prefill}
+                busy={busy}
+                autoFocus={focusComposer}
+                onSubmit={submit}
+              />
+            </div>
+            {submitError ? (
+              <p className="mt-3 border border-danger/30 bg-danger/5 px-4 py-2 text-xs text-[color:var(--color-danger-text)]">
+                {submitError}
+              </p>
+            ) : null}
+            <div className="mt-4 flex items-center gap-3">
+              <Sparkles className="size-3.5 text-gold" />
+              <span className="studio-meta">
+                Start with an intent. GRAVITY decides what kind of intelligence belongs behind it.
+              </span>
+            </div>
+          </div>
         </div>
         <RightSideVisualField />
       </section>
-
-      <div className="studio-dash-grid">
-        <div className="studio-panel studio-panel-pad">
-          <div className="flex items-center justify-between gap-3">
-            <p className="studio-eyebrow">01 / NEW TASK</p>
-            <span className="studio-meta">START WITH AN INTENT</span>
-          </div>
-          <div ref={composerRef} className="mt-5 scroll-mt-24">
-            <TaskComposer
-              key={prefill || "fresh"}
-              initialValue={prefill}
-              busy={busy}
-              autoFocus={focusComposer}
-              onSubmit={submit}
-            />
-          </div>
-          {submitError ? (
-            <p className="mt-3 border border-danger/30 bg-danger/5 px-4 py-2 text-xs text-[color:var(--color-danger-text)]">
-              {submitError}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="studio-panel studio-panel-fill studio-panel-pad">
-          <div className="flex items-center justify-between gap-3">
-            <p className="studio-eyebrow">02 / SNAPSHOT</p>
-            <Link href="/settings" className="studio-text-link">
-              View plan
-            </Link>
-          </div>
-          <div className="studio-stat-grid mt-5">
-            <StatCard
-              label="TASKS RUN"
-              icon={<Layers className="size-4" />}
-              value={stats ? num(stats.total) : null}
-              count={stats ? stats.total : undefined}
-              foot="LIFETIME"
-            />
-            <StatCard
-              label="COMPLETED"
-              icon={<CheckCircle2 className="size-4" />}
-              value={stats ? num(stats.completed) : null}
-              count={stats ? stats.completed : undefined}
-              foot="DELIVERED TO YOU"
-            />
-            <StatCard
-              label="SUCCESS RATE"
-              icon={<Gauge className="size-4" />}
-              value={stats && stats.total > 0 ? `${Math.round((stats.completed / stats.total) * 100)}%` : stats ? "—" : null}
-              foot="OF ALL RUNS"
-              metric={stats && stats.total > 0 && stats.completed / stats.total >= 0.8 ? "ok" : undefined}
-            />
-            <StatCard
-              label="TOKENS / MONTH"
-              icon={<Timer className="size-4" />}
-              value={stats ? num(stats.tokensMonth) : null}
-              count={stats ? stats.tokensMonth : undefined}
-              foot={`OF ${FREE_LIMIT.toLocaleString()} ALLOWED`}
-              metric={stats && usagePct < 70 ? "ok" : "warn"}
-            />
-          </div>
-
-          <div className="studio-usage mt-4">
-            <div className="flex items-baseline justify-between gap-3">
-              <p className="studio-meta">FREE PLAN · THIS MONTH</p>
-              <p className="studio-meta">{Math.round(usagePct)}%</p>
-            </div>
-            <div className="studio-usage-meter">
-              <div
-                className={`studio-usage-fill ${usagePct < 70 ? "" : "studio-usage-fill-high"}`}
-                style={{ width: `${usagePct}%` }}
-              />
-            </div>
-            <div className="studio-usage-row">
-              <span className="studio-meta">
-                {stats ? `${num(stats.tokensMonth)} / ${num(FREE_LIMIT)}` : "—"}
-              </span>
-              <span className="studio-meta flex items-center gap-1.5">
-                <Zap className="size-3 text-gold" />
-                UPGRADE FOR 10× MORE
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <div ref={runRef}>
         {thread.length > 0 ? (
@@ -344,6 +300,74 @@ function HomeContent() {
         ) : null}
       </div>
 
+      <section className="studio-section">
+        <div className="flex flex-wrap items-end justify-between gap-6">
+          <div>
+            <p className="studio-eyebrow">02 / SNAPSHOT</p>
+            <h2 className="studio-section-title mt-3">
+              The account, <span>at a glance.</span>
+            </h2>
+          </div>
+          <Link href="/settings" className="studio-text-link">
+            View plan <ArrowRight className="size-3.5" />
+          </Link>
+        </div>
+
+        <div className="studio-stat-grid mt-9">
+          <StatCard
+            label="TASKS RUN"
+            icon={<Layers className="size-4" />}
+            value={stats ? num(stats.total) : null}
+            count={stats ? stats.total : undefined}
+            foot="LIFETIME"
+          />
+          <StatCard
+            label="COMPLETED"
+            icon={<CheckCircle2 className="size-4" />}
+            value={stats ? num(stats.completed) : null}
+            count={stats ? stats.completed : undefined}
+            foot="DELIVERED TO YOU"
+          />
+          <StatCard
+            label="SUCCESS RATE"
+            icon={<Gauge className="size-4" />}
+            value={stats && stats.total > 0 ? `${Math.round((stats.completed / stats.total) * 100)}%` : stats ? "—" : null}
+            foot="OF ALL RUNS"
+            metric={stats && stats.total > 0 && stats.completed / stats.total >= 0.8 ? "ok" : undefined}
+          />
+          <StatCard
+            label="TOKENS / MONTH"
+            icon={<Timer className="size-4" />}
+            value={stats ? num(stats.tokensMonth) : null}
+            count={stats ? stats.tokensMonth : undefined}
+            foot={`OF ${FREE_LIMIT.toLocaleString()} ALLOWED`}
+            metric={stats && usagePct < 70 ? "ok" : "warn"}
+          />
+        </div>
+
+        <div className="studio-usage mt-6">
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="studio-meta">FREE PLAN · THIS MONTH</p>
+            <p className="studio-meta">{Math.round(usagePct)}%</p>
+          </div>
+          <div className="studio-usage-meter">
+            <div
+              className={`studio-usage-fill ${usagePct < 70 ? "" : "studio-usage-fill-high"}`}
+              style={{ width: `${usagePct}%` }}
+            />
+          </div>
+          <div className="studio-usage-row">
+            <span className="studio-meta">
+              {stats ? `${num(stats.tokensMonth)} / ${num(FREE_LIMIT)}` : "—"}
+            </span>
+            <span className="studio-meta flex items-center gap-1.5">
+              <Zap className="size-3 text-gold" />
+              UPGRADE FOR 10× MORE
+            </span>
+          </div>
+        </div>
+      </section>
+
       <section className="studio-section studio-contrast-band studio-bone-band">
         <div className="flex flex-wrap items-end justify-between gap-6">
           <div>
@@ -391,39 +415,37 @@ function HomeContent() {
         </div>
 
         {stats === null ? (
-          <div className="studio-list mt-8">
+          <div className="mt-8 grid gap-3 lg:grid-cols-3">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="studio-list-item">
-                <span className="studio-skeleton studio-list-icon" />
+              <div key={i} className="studio-recent-card">
+                <span className="studio-recent-icon">
+                  <span className="studio-skeleton h-4 w-4" />
+                </span>
                 <div className="min-w-0 flex-1">
                   <p className="studio-skeleton h-3 w-3/4" />
-                  <p className="studio-skeleton mt-2 h-2 w-1/3" />
+                  <p className="studio-skeleton mt-2 h-2 w-1/2" />
                 </div>
               </div>
             ))}
           </div>
         ) : recent.length > 0 ? (
-          <div className="studio-list mt-8">
+          <div className="mt-8 grid gap-3 lg:grid-cols-3">
             {recent.map((item) => {
               const done = item.status === "completed";
               return (
-                <Link key={item.id} href={`/projects/${item.id}`} className="studio-list-item">
-                  <span className="studio-list-icon">
+                <Link key={item.id} href={`/projects/${item.id}`} className="studio-recent-card group">
+                  <span className="studio-recent-icon">
                     <FileText className="size-4" />
                   </span>
-                  <div className="studio-list-body">
-                    <p className="studio-list-title">{item.prompt}</p>
-                    <p className="studio-list-meta">
-                      {done ? "COMPLETE" : item.status.toUpperCase()} ·{" "}
-                      {new Date(item.createdAt).toLocaleDateString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                      })}{" "}
-                      · {new Date(item.createdAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-                      {item.totalTokens ? ` · ${item.totalTokens.toLocaleString()} tokens` : ""}
+                  <div className="min-w-0 flex-1 text-left">
+                    <p className="studio-eyebrow">
+                      {done ? "COMPLETE" : item.status.toUpperCase()} · {timeAgo(item.createdAt)}
+                    </p>
+                    <p className="mt-3 truncate text-sm leading-6 text-[color:var(--color-ivory-dim)]">
+                      {item.prompt}
                     </p>
                   </div>
-                  <ArrowRight className="size-4 shrink-0 opacity-60" />
+                  <ArrowRight className="size-4 shrink-0 text-[color:var(--color-muted-foreground)]" />
                 </Link>
               );
             })}
