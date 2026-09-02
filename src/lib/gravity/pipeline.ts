@@ -651,7 +651,7 @@ export async function executeMission(missionId: string): Promise<void> {
 
         await executeNode({
           runId: run.id,
-          name: `Statistical Engine — ${payload.fileName}`,
+          name: `Analyze: ${payload.fileName}`,
           type: "statistical",
           stage: "L1 · Compute",
           purpose: `Analyze ${payload.fileName}: ${analysisReport.summary.rows} rows × ${analysisReport.summary.columns} columns — trend detection, anomaly scoring, correlation analysis`,
@@ -666,7 +666,7 @@ export async function executeMission(missionId: string): Promise<void> {
         const fileNames = csvPayloads.map((p) => p.fileName).join(", ");
         const synthNode = await executeNode({
           runId: run.id,
-          name: "Data Synthesis",
+          name: "Synthesis",
           type: "small_llm",
           stage: "L2 · Synthesis",
           purpose: `Translate statistical findings from ${fileNames} into actionable management recommendations`,
