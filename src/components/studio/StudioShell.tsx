@@ -8,7 +8,7 @@ import { auth } from "@/lib/firebase";
 import { useGravityUser } from "@/lib/gravity-user";
 import { useMissionFeed } from "@/lib/gravity-missions";
 import { CommandPalette } from "@/components/studio/CommandPalette";
-import { ArrowUpRight, LogOut, Menu, X, Zap } from "lucide-react";
+import { LogOut, Menu, X, Zap } from "lucide-react";
 
 const FREE_LIMIT = 250_000;
 
@@ -18,11 +18,6 @@ const NAV_ITEMS = [
   { label: "Projects", href: "/projects" },
   { label: "Settings", href: "/settings" },
 ];
-
-const EXTERNAL_LINK = {
-  label: "Technical architecture",
-  href: "https://gravity-gules-sigma.vercel.app/",
-};
 
 export function StudioShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -172,17 +167,6 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
                   </Link>
                 );
               })}
-              <a
-                href={EXTERNAL_LINK.href}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() => setOpen(false)}
-                className="studio-nav-link studio-nav-link-external"
-              >
-                <span className="studio-nav-number">05</span>
-                <span className="min-w-0 flex-1">{EXTERNAL_LINK.label}</span>
-                <ArrowUpRight className="ml-auto size-4 shrink-0" />
-              </a>
             </div>
           </nav>
 
