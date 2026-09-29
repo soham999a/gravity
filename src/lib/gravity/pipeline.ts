@@ -16,6 +16,13 @@ import {
   createRoutingDecision,
 } from "@/lib/db-firestore";
 import { callLLM, isLLMConfigured } from "@/lib/gravity/llm";
+import {
+  routeStrategyAdaptive,
+  toPersistedAdaptive,
+  recordPersistedOutcome,
+  adaptationState,
+  type PersistedAdaptiveDecision,
+} from "@/lib/gravity/kernel";
 import { analyzeDataset, formatReportForLLM } from "@/lib/gravity/stats";
 import { generateImageVariations } from "@/lib/gravity/imagegen";
 import { generateWebsite } from "@/lib/gravity/sitegen";
@@ -23,11 +30,20 @@ import type { StrategyKind } from "@/lib/gravity/types";
 
 type Complexity = "low" | "medium" | "high" | "critical";
 
+/** Class-E fault-injection hook (declared globally, armed by the test battery API). */
+declare global {
+  // eslint-disable-next-line no-var
+  var __gravity_inject_failure__: { consume(name: string): boolean } | undefined;
+}
+
 /**
  * Wall-clock budget for one mission execution. Vercel Hobby allows 60s;
  * leave headroom for DB writes so we always finish cleanly.
+ * Local/full-cycle runs (battery, heavy L5 missions) get a generous budget —
+ * the 429-aware backoff in llm.ts can legitimately need 20s+ per retry.
+ * The Vercel deployment env (GRAVITY_DEADLINE_MS=52000) restores the serverless cap.
  */
-const EXECUTION_DEADLINE_MS = 52_000;
+const EXECUTION_DEADLINE_MS = Number(process.env.GRAVITY_DEADLINE_MS ?? 300_000);
 
 const COMPLEX_WORDS = [
   "strategy", "strategic", "multi", "agent", "deliberation", "optimise", "optimize",
@@ -388,6 +404,11 @@ async function executeNode(opts: {
 
   try {
     if (opts.tier) {
+      // Class-E fault injection (workload battery): throw once, let the
+      // orchestrator's retry recover — proves structural resilience live.
+      if (global.__gravity_inject_failure__?.consume(opts.name)) {
+        throw new Error("RESOURCE_UNAVAILABLE: injected GPU worker failure for Class E");
+      }
       const result = await callLLM({
         tier: opts.tier,
         system: opts.system,
@@ -466,6 +487,29 @@ function deterministicArtifact(prompt: string): string {
   const numbers = [...prompt.matchAll(/\b\d+(?:\.\d+)?\b/g)].map((m) => m[0]);
   const constraints = (prompt.match(/\b(?:within|under|at least|maximum|minimum|no more than|less than|greater than)\s[^.,;]+/gi) ?? []).slice(0, 6);
 
+  // Genuine local computation: units × price aggregation, series sums/means.
+  const computations: string[] = [];
+  const unitPrice = [...prompt.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(?:units?|items?)\s*(?:at|@|for)\s*\$?(\d[\d,]*(?:\.\d+)?)/gi)];
+  if (unitPrice.length >= 1) {
+    let total = 0;
+    for (const m of unitPrice) {
+      total += parseFloat(m[1]!.replace(/,/g, "")) * parseFloat(m[2]!.replace(/,/g, ""));
+    }
+    computations.push(
+      `Computed revenue (Σ units × price): $${total.toLocaleString("en-US", { minimumFractionDigits: 2 })}`,
+    );
+  }
+  if (computations.length === 0) {
+    const series = [...prompt.matchAll(/\b(\d[\d,]*(?:\.\d+)?)\b/g)].map((m) =>
+      parseFloat(m[1]!.replace(/,/g, "")),
+    );
+    if (series.length >= 3) {
+      const sum = series.reduce((s, v) => s + v, 0);
+      computations.push(`Computed sum of numeric series: ${sum.toLocaleString("en-US")}`);
+      computations.push(`Computed mean of numeric series: ${(sum / series.length).toFixed(2)}`);
+    }
+  }
+
   return [
     "PROBLEM SPECIFICATION — computed locally, zero model tokens.",
     "",
@@ -477,6 +521,9 @@ function deterministicArtifact(prompt: string): string {
     "",
     "Numeric parameters:",
     ...(numbers.length ? numbers.map((n) => `  • ${n}`) : ["  • (none supplied — attach data for exact solving)"]),
+    "",
+    "Computed results (local, exact — zero model tokens):",
+    ...(computations.length ? computations.map((c) => `  • ${c}`) : ["  • (no computable structure detected)"]),
     "",
     "Constraints extracted:",
     ...(constraints.length ? constraints.map((c) => `  • ${c.trim()}`) : ["  • (none stated)"]),
@@ -629,12 +676,15 @@ export async function executeMission(missionId: string): Promise<void> {
   await updateMission(missionId, { status: "executing" });
 
   const run = await createExecutionRun(missionId);
+  let adaptiveRouting: PersistedAdaptiveDecision | null = null;
 
   const csvPayloads = extractCSVData(mission.prompt);
 
   try {
     const decision = await getRoutingDecision(missionId);
     const strategy = (decision?.selectedStrategy ?? "small_llm") as StrategyKind;
+    const adaptiveRoutingDecision = (decision?.adaptive ?? null) as PersistedAdaptiveDecision | null;
+    adaptiveRouting = adaptiveRoutingDecision;
 
     let finalOutput = "";
 
@@ -784,7 +834,7 @@ export async function executeMission(missionId: string): Promise<void> {
         outputOverride: artifact,
       });
       finalOutput = r.output;
-    } else if (strategy === "statistical") {
+    } else if (strategy === "statistical" || strategy === "machine_learning") {
       const artifact = statisticalArtifact(mission.prompt);
       const r = await executeNode({
         runId: run.id,
@@ -898,20 +948,30 @@ export async function executeMission(missionId: string): Promise<void> {
       const skipCritic = Date.now() > deadlineAt - 16_000;
       let critiqueOutput = "";
       if (!skipCritic) {
-        const critique = await executeNode({
-          runId: run.id,
-          name: "Critic",
-          type: "multi_agent",
-          stage: "L5 · Critique",
-          purpose: "Challenge the specialists, flag gaps and errors",
-          tier: "general",
-          system:
-            "You are a ruthless critic. Identify what the analysis missed, got wrong, or left too shallow. List specific gaps with why each matters. Maximum 8 bullets.",
-          prompt: `Mission: ${mission.prompt}\n\nSpecialist findings:\n${specialistOutputs.join("\n\n")}`,
-          maxTokens: 700,
-          deadlineAt,
-        });
-        critiqueOutput = critique.output;
+        try {
+          const critique = await executeNode({
+            runId: run.id,
+            name: "Critic",
+            type: "multi_agent",
+            stage: "L5 · Critique",
+            purpose: "Challenge the specialists, flag gaps and errors",
+            tier: "general",
+            system:
+              "You are a ruthless critic. Identify what the analysis missed, got wrong, or left too shallow. List specific gaps with why each matters. Maximum 8 bullets.",
+            prompt: `Mission: ${mission.prompt}\n\nSpecialist findings:\n${specialistOutputs.join("\n\n")}`,
+            maxTokens: 700,
+            deadlineAt,
+          });
+          critiqueOutput = critique.output;
+        } catch (critiqueErr) {
+          // Non-fatal: a critic hiccup must not destroy the specialists' work.
+          // Synthesis proceeds without critique notes.
+          console.warn(
+            "[pipeline] critic failed, continuing synthesis:",
+            String(critiqueErr).slice(0, 140),
+          );
+          critiqueOutput = "";
+        }
       }
 
       const synthesis = await executeNode({
@@ -1030,6 +1090,13 @@ export async function executeMission(missionId: string): Promise<void> {
       totalLatencyMs,
     });
   } catch (err) {
+    if (adaptiveRouting) {
+      recordPersistedOutcome(adaptiveRouting, {
+        status: "FAILED",
+        quality: 10,
+        latencyMs: 0,
+      });
+    }
     await updateExecutionRun(run.id, {
       status: "failed",
       completedAt: new Date().toISOString(),
@@ -1087,7 +1154,11 @@ export async function createMissionWithPlan(
     summary: profile.summary,
   });
 
-  const routing = routeStrategy(profile);
+  const routing = routeStrategyAdaptive(
+    profile,
+    effectivePrompt,
+    { tenant: ctx?.tenantId ?? null, domain: profile.domain },
+  );
   await createRoutingDecision({
     missionId: mission.id,
     candidates: routing.candidates.map((cd) => ({
@@ -1104,6 +1175,7 @@ export async function createMissionWithPlan(
     voiScore: routing.voiScore,
     confidence: routing.confidence,
     reasoning: routing.reasoning,
+    adaptive: toPersistedAdaptive(routing),
   });
 
   await updateMission(mission.id, { status: "pending" });

@@ -1,6 +1,23 @@
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
+/**
+ * 429-aware throttle handling: when a provider returns RESOURCE_EXHAUSTED,
+ * wait out the provider-suggested delay (up to 20s locally; Vercel's 60s
+ * function cap makes longer waits pointless) and retry the SAME provider
+ * before falling through the chain. Prevents cascade failures on token-heavy
+ * missions (L5 deliberation) that burst past free-tier TPM caps.
+ */
+function throttleDelayMs(errText: string): number {
+  const retryMatch = errText.match(/"retryDelay": "(\d+)s"/);
+  if (retryMatch) return Math.min(20_000, Number(retryMatch[1]) * 1000 + 500);
+  return 12_000;
+}
+
+function isThrottled(status: number, errText: string): boolean {
+  return status === 429 || /RESOURCE_EXHAUSTED|rate limit/i.test(errText);
+}
+
 export interface LLMResult {
   text: string;
   tokens: number;
@@ -78,7 +95,13 @@ async function callGemini(opts: LLMOpts): Promise<LLMResult> {
       });
 
       if (!res.ok) {
-        const err = new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
+        const errText = await res.text();
+        const err = new Error(`Gemini ${res.status}: ${errText.slice(0, 300)}`);
+        if (isThrottled(res.status, errText) && attempt === 0) {
+          lastErr = err;
+          await sleep(throttleDelayMs(errText));
+          continue;
+        }
         if (retryable(res.status) && attempt === 0) {
           lastErr = err;
           await sleep(1200);
@@ -147,7 +170,13 @@ async function callGroq(opts: LLMOpts): Promise<LLMResult> {
       });
 
       if (!res.ok) {
-        const err = new Error(`Groq ${res.status}: ${(await res.text()).slice(0, 300)}`);
+        const errText = await res.text();
+        const err = new Error(`Groq ${res.status}: ${errText.slice(0, 300)}`);
+        if (isThrottled(res.status, errText) && attempt === 0) {
+          lastErr = err;
+          await sleep(throttleDelayMs(errText));
+          continue;
+        }
         if (retryable(res.status) && attempt === 0) {
           lastErr = err;
           await sleep(1200);

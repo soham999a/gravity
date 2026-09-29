@@ -316,6 +316,8 @@ export interface RoutingDecisionDoc {
   voiScore: number;
   confidence: number;
   reasoning: string;
+  /** Persisted Thompson-sampling kernel decision (adaptive routing brain). */
+  adaptive?: unknown;
 }
 
 export async function createRoutingDecision(data: Omit<RoutingDecisionDoc, "id">): Promise<RoutingDecisionDoc> {

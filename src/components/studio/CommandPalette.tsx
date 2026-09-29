@@ -114,6 +114,13 @@ export function CommandPalette() {
         run: () => router.push("/projects"),
       },
       {
+        id: "classes",
+        label: "Five Workload Classes",
+        hint: "Benchmark battery",
+        icon: <Layers className="size-3.5" />,
+        run: () => router.push("/classes"),
+      },
+      {
         id: "settings",
         label: "Settings",
         hint: "Account & plan",
