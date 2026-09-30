@@ -21,6 +21,7 @@ import {
   toPersistedAdaptive,
   recordPersistedOutcome,
   adaptationState,
+  type AdaptiveRouteResult,
   type PersistedAdaptiveDecision,
 } from "@/lib/gravity/kernel";
 import { analyzeDataset, formatReportForLLM } from "@/lib/gravity/stats";
@@ -1111,7 +1112,15 @@ export async function executeMission(missionId: string): Promise<void> {
 
 export async function createMissionWithPlan(
   prompt: string,
-  ctx?: { tenantId?: string; userId?: string; files?: { data: string; name: string }[] },
+  ctx?: {
+    tenantId?: string;
+    userId?: string;
+    files?: { data: string; name: string }[];
+    /** "adaptive" (default) uses the Thompson-sampling kernel; "static" pins
+     *  the legacy heuristic router — the GRAVITY-STATIC benchmark baseline
+     *  that isolates the architecture's contribution. */
+    routing?: "adaptive" | "static";
+  },
 ) {
   // If files are provided, embed them in the prompt using the data marker
   let effectivePrompt = prompt;
@@ -1154,11 +1163,16 @@ export async function createMissionWithPlan(
     summary: profile.summary,
   });
 
-  const routing = routeStrategyAdaptive(
-    profile,
-    effectivePrompt,
-    { tenant: ctx?.tenantId ?? null, domain: profile.domain },
-  );
+  // "static" pins the legacy heuristic router (kernel OFF) — the GRAVITY-STATIC
+  // benchmark baseline that isolates the architecture's contribution.
+  const isStaticRouting = ctx?.routing === "static";
+  const routing = isStaticRouting
+    ? routeStrategy(profile)
+    : routeStrategyAdaptive(
+        profile,
+        effectivePrompt,
+        { tenant: ctx?.tenantId ?? null, domain: profile.domain },
+      );
   await createRoutingDecision({
     missionId: mission.id,
     candidates: routing.candidates.map((cd) => ({
@@ -1175,7 +1189,7 @@ export async function createMissionWithPlan(
     voiScore: routing.voiScore,
     confidence: routing.confidence,
     reasoning: routing.reasoning,
-    adaptive: toPersistedAdaptive(routing),
+    adaptive: isStaticRouting ? null : toPersistedAdaptive(routing as AdaptiveRouteResult),
   });
 
   await updateMission(mission.id, { status: "pending" });

@@ -121,6 +121,13 @@ export function CommandPalette() {
         run: () => router.push("/classes"),
       },
       {
+        id: "benchmark",
+        label: "Benchmark Harness",
+        hint: "Backend benchmark records",
+        icon: <Layers className="size-3.5" />,
+        run: () => router.push("/benchmark"),
+      },
+      {
         id: "settings",
         label: "Settings",
         hint: "Account & plan",

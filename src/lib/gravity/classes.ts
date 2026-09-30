@@ -128,13 +128,18 @@ async function fetchMissionState(missionId: string) {
   return { runRow, nodes: (nodes ?? []) as NodeDoc[], evaluation };
 }
 
-export async function runWorkloadClass(def: WorkloadClassDef): Promise<ClassReceipt> {
+export async function runWorkloadClass(
+  def: WorkloadClassDef,
+  options: { routing?: "adaptive" | "static" } = {},
+): Promise<ClassReceipt> {
   const started = Date.now();
 
-  // 1. Profile + route (the adaptive kernel decides inside createMissionWithPlan).
+  // 1. Profile + route (the adaptive kernel decides inside createMissionWithPlan;
+  //    routing:"static" pins the legacy heuristic router for the benchmark baseline).
   const { mission } = await createMissionWithPlan(def.prompt, {
     tenantId: "workload-battery",
     userId: "workload-battery",
+    routing: options.routing,
   });
 
   // 2. Read back the persisted kernel decision.
