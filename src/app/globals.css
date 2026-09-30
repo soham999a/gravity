@@ -676,8 +676,30 @@
    ============================================================ */
 
 .studio-app {
+  /* isolate: the swarm canvas lives at z-index -1 INSIDE this context —
+     above the void background, below every surface and panel. */
+  isolation: isolate;
+  position: relative;
   background: var(--color-void);
   color: var(--color-ivory-dim);
+}
+
+/* --- Swarm murmuration background (canvas boids) --- */
+.swarm-background {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  display: block;
+  pointer-events: none;
+  opacity: 0.9;
+  /* promote to its own layer so compositing stays off the main thread */
+  transform: translateZ(0);
+  will-change: transform;
+}
+@media (max-width: 640px) {
+  .swarm-background {
+    opacity: 0.72;
+  }
 }
 
 .status-dot {

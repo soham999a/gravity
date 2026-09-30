@@ -8,6 +8,7 @@ import { auth } from "@/lib/firebase";
 import { useGravityUser } from "@/lib/gravity-user";
 import { useMissionFeed } from "@/lib/gravity-missions";
 import { CommandPalette } from "@/components/studio/CommandPalette";
+import { SwarmBackground } from "@/components/studio/SwarmBackground";
 import { LogOut, Menu, X, Zap } from "lucide-react";
 
 const FREE_LIMIT = 250_000;
@@ -90,6 +91,7 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="studio-app studio-shell">
+      <SwarmBackground />
       <header className="studio-header">
         <div className="flex items-center gap-3">
           <button
