@@ -24,8 +24,27 @@ export function TaskComposer({
   const [prompt, setPrompt] = React.useState(initialValue);
   const [files, setFiles] = React.useState<CsvFile[]>([]);
   const [dragOver, setDragOver] = React.useState(false);
+  const [boxHeight, setBoxHeight] = React.useState<number | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const canSubmit = prompt.trim().length > 0 && !busy;
+
+  /** Drag the divider line to resize the chatbox (pointer + keyboard). */
+  const resizeFrom = React.useRef({ y: 0, h: 0 });
+  const clampHeight = (h: number) =>
+    Math.max(72, Math.min(h, Math.round(window.innerHeight * 0.6)));
+  const onResizeStart = (clientY: number) => {
+    resizeFrom.current = { y: clientY, h: boxHeight ?? guessPromptHeight() };
+  };
+  const onResizeMove = (clientY: number) => {
+    // Dragging UP expands the box.
+    setBoxHeight(clampHeight(resizeFrom.current.h + (resizeFrom.current.y - clientY)));
+  };
+  const guessPromptHeight = () => {
+    const el = fileInputRef.current
+      ?.closest(".gravity-composer")
+      ?.querySelector("textarea.studio-prompt");
+    return el instanceof HTMLElement && el.offsetHeight > 40 ? el.offsetHeight : 140;
+  };
 
   const addFile = (file: File) => {
     if (!file.name.endsWith(".csv") && !file.name.endsWith(".tsv") && !file.name.endsWith(".txt")) {
@@ -134,7 +153,6 @@ export function TaskComposer({
       ) : null}
 
       <div className="gravity-composer-top">
-        <Sparkles className="gravity-composer-spark" size={18} />
         <textarea
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
@@ -145,7 +163,8 @@ export function TaskComposer({
             }
           }}
           onPaste={handlePaste}
-          rows={compact ? 2 : 4}
+          rows={compact ? 1 : 2}
+          style={boxHeight ? { height: `${boxHeight}px` } : undefined}
           placeholder={
             files.length > 0
               ? "Describe what you want to analyze in this data…"
@@ -156,6 +175,37 @@ export function TaskComposer({
           className="studio-prompt"
         />
       </div>
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize the chatbox — drag or use arrow keys"
+        tabIndex={0}
+        className="gravity-composer-resize"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          try {
+            event.currentTarget.setPointerCapture(event.pointerId);
+          } catch {
+            /* synthetic/inactive pointers can't capture — drag still tracks while held */
+          }
+          onResizeStart(event.clientY);
+        }}
+        onPointerMove={(event) => {
+          if (event.buttons > 0) onResizeMove(event.clientY);
+        }}
+        onDoubleClick={() => setBoxHeight(null)}
+        onKeyDown={(event) => {
+          const step = event.shiftKey ? 64 : 24;
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            setBoxHeight((h) => clampHeight((h ?? guessPromptHeight()) + step));
+          }
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            setBoxHeight((h) => clampHeight((h ?? guessPromptHeight()) - step));
+          }
+        }}
+      />
       <div className="gravity-composer-bottom">
         <div className="flex items-center gap-3">
           <button

@@ -11,7 +11,6 @@ import {
   FileText,
   Gauge,
   Layers,
-  Sparkles,
   Timer,
   Zap,
 } from "lucide-react";
@@ -243,7 +242,6 @@ function HomeContent() {
               </p>
             ) : null}
             <div className="mt-4 flex items-center gap-3">
-              <Sparkles className="size-3.5 text-gold" />
               <span className="studio-meta">
                 Start with an intent. GRAVITY decides what kind of intelligence belongs behind it.
               </span>

@@ -234,7 +234,8 @@
 .studio-hero-composer {
   position: relative;
   z-index: 4;
-  width: min(100%, 1180px);
+  /* compact chatbox — senior asked for a small box, not a full-width banner */
+  width: min(100%, 720px);
   margin-top: clamp(22px, 3.5vh, 38px);
 }
 
@@ -290,10 +291,73 @@
 }
 
 .gravity-composer-top {
-  padding: 22px 23px 16px;
+  padding: 10px 16px 7px;
   display: flex;
   align-items: flex-start;
-  gap: 13px;
+  gap: 10px;
+}
+
+/* --- Chatbox resize grip — the borderline senior asked for --- */
+.studio-prompt {
+  min-height: 36px; /* keeps a floor when the fixed height kicks in */
+  overflow-y: auto;
+}
+.gravity-composer-resize {
+  height: 12px;
+  margin: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  touch-action: none;
+  border: 0;
+  background: transparent;
+  outline: none;
+}
+.gravity-composer-resize::before {
+  content: "";
+  width: 100%;
+  height: 1px;
+  /* rest state = the box's single borderline (replaces the old border-top) */
+  background: var(--color-border);
+  transition: background 0.25s ease;
+}
+.gravity-composer-resize::after {
+  content: "";
+  position: absolute;
+  width: 34px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(184, 150, 12, 0.55);
+  opacity: 0;
+  transform: scaleX(0.4);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+.gravity-composer-resize:hover::before,
+.gravity-composer-resize:focus-visible::before {
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(184, 150, 12, 0.9) 12%,
+    rgba(184, 150, 12, 0.9) 88%,
+    transparent
+  );
+}
+.gravity-composer-resize:hover::after,
+.gravity-composer-resize:focus-visible::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+.gravity-composer-resize:focus-visible {
+  box-shadow: 0 1px 0 0 rgba(184, 150, 12, 0.4);
+}
+@media (prefers-reduced-motion: reduce) {
+  .gravity-composer-resize::before,
+  .gravity-composer-resize::after {
+    transition: none;
+  }
 }
 
 .gravity-composer-spark {
@@ -323,9 +387,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  border-top: 1px solid var(--color-border);
-  padding: 11px 15px;
+  gap: 10px;
+  padding: 7px 12px;
 }
 
 .gravity-composer-hint {
@@ -1087,8 +1150,8 @@
   color: var(--color-ivory);
   font-family: var(--font-serif);
   font-weight: 300;
-  font-size: clamp(22px, 2.5vw, 30px);
-  line-height: 1.25;
+  font-size: clamp(15px, 1.5vw, 19px); /* compact chatbox type, senior's ask */
+  line-height: 1.35;
   outline: none;
 }
 .studio-prompt::placeholder {
