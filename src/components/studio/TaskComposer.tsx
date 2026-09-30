@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ArrowRight, FileSpreadsheet, Paperclip, Sparkles, X } from "lucide-react";
+import { ArrowRight, FileSpreadsheet, Paperclip, X } from "lucide-react";
 
 export interface CsvFile {
   data: string;
