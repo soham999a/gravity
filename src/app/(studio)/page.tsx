@@ -14,8 +14,11 @@ import {
   Timer,
   Zap,
 } from "lucide-react";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 import { TaskComposer } from "@/components/studio/TaskComposer";
 import type { CsvFile } from "@/components/studio/TaskComposer";
+import { AuthModal } from "@/components/auth/AuthModal";
 import { MissionRun } from "@/components/studio/MissionRun";
 import { RightSideVisualField } from "@/components/gravity/RightSideVisualField";
 import { useGravityUser } from "@/lib/gravity-user";
@@ -105,6 +108,17 @@ function HomeContent() {
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const [prefill, setPrefill] = React.useState("");
   const [focusComposer, setFocusComposer] = React.useState(false);
+  // ChatGPT-style gate: anon visitors write first, sign in when they run.
+  const [isAuthed, setIsAuthed] = React.useState(
+    () => typeof document !== "undefined" && document.cookie.includes("fb-token="),
+  );
+  const [authOpen, setAuthOpen] = React.useState(false);
+  const [pendingRun, setPendingRun] = React.useState<{ prompt: string; files?: CsvFile[] } | null>(null);
+
+  React.useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => setIsAuthed(Boolean(user)));
+    return () => unsub();
+  }, []);
   const runRef = React.useRef<HTMLDivElement>(null);
   const composerRef = React.useRef<HTMLDivElement>(null);
   const remountRef = React.useRef(0);
@@ -154,7 +168,7 @@ function HomeContent() {
     }
   }, [missionId]);
 
-  const submit = async (prompt: string, files?: CsvFile[]) => {
+  const runMission = async (prompt: string, files?: CsvFile[]) => {
     setBusy(true);
     setSubmitError(null);
     setMissionId(null);
@@ -169,6 +183,23 @@ function HomeContent() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const submit = (prompt: string, files?: CsvFile[]) => {
+    if (!isAuthed) {
+      // Keep what they typed; pop the sign-in; run it right after.
+      setPendingRun({ prompt, files });
+      setAuthOpen(true);
+      return;
+    }
+    void runMission(prompt, files);
+  };
+
+  const handleAuthSuccess = () => {
+    setAuthOpen(false);
+    const run = pendingRun;
+    setPendingRun(null);
+    if (run) void runMission(run.prompt, run.files);
   };
 
   const handleFollowUp = async (refinement: string) => {
@@ -250,9 +281,18 @@ function HomeContent() {
 
           <RightSideVisualField />
         </div>
-      </section>
+      </section>      <AuthModal
+        open={authOpen}
+        onClose={() => {
+          setAuthOpen(false);
+          setPendingRun(null);
+        }}
+        onSuccess={handleAuthSuccess}
+        reason="Sign in and GRAVITY runs the task you just wrote — nothing is lost."
+      />
 
       <div ref={runRef}>
+
         {thread.length > 0 ? (
           <section className="studio-thread mt-16">
             <div className="flex flex-wrap items-center justify-between gap-3">
