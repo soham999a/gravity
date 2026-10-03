@@ -13,7 +13,17 @@ import {
   Tablet,
   Wand2,
 } from "lucide-react";
-import { Markdown } from "@/components/studio/Markdown";
+import {
+  AutoCharts,
+  buildExportMarkdown,
+  detectSeries,
+  EngineTrace,
+  HeroStatsStrip,
+  JuryScorecard,
+  SectionedBrief,
+  type HeroStats,
+  type TraceNode,
+} from "@/components/studio/ResultPortal";
 
 interface MissionData {
   mission: {
@@ -44,11 +54,18 @@ interface MissionData {
     status: string | null;
     output: string | null;
     tokens: number | null;
+    latencyMs: number | null;
   }[];
   evaluation: {
     qualityScore: number | null;
     dimensions: { name: string; score: number }[] | null;
     feedback: string | null;
+  } | null;
+  run: {
+    status: string;
+    totalCost: number;
+    totalTokens: number;
+    totalLatencyMs: number;
   } | null;
 }
 
@@ -107,7 +124,6 @@ export function MissionRun({
   const [refinement, setRefinement] = React.useState("");
   const [followBusy, setFollowBusy] = React.useState(false);
   const [retryBusy, setRetryBusy] = React.useState(false);
-  const [rawOpen, setRawOpen] = React.useState(false);
   const onStatusRef = React.useRef(onStatus);
   React.useEffect(() => {
     onStatusRef.current = onStatus;
@@ -119,7 +135,7 @@ export function MissionRun({
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/missions/${missionId}`, { cache: "no-store" });
+        const res = await fetch(`/api/missions/${missionId}`, { cache: "no-store", credentials: "include" });
         if (!res.ok) throw new Error(`Status ${res.status}`);
         const json = (await res.json()) as MissionData;
         if (cancelled) return;
@@ -227,6 +243,87 @@ export function MissionRun({
   const workerNames = nodes.map((n) => n.name).filter(Boolean) as string[];
   const dimensions = (evaluation?.dimensions ?? []).filter((d) => d.score > 0).slice(0, 4);
 
+  // --- Result portal data: hero stats, kind detection, engine trace ---
+  const traceNodes: TraceNode[] = nodes.map((n) => ({
+    id: n.id,
+    name: n.name ?? "Worker",
+    stage: n.stage ?? "",
+    purpose: n.purpose,
+    status: n.status,
+    output: n.output,
+    tokens: n.tokens ?? 0,
+    latencyMs: n.latencyMs ?? 0,
+  }));
+  const completedCalls = traceNodes.filter((n) => n.tokens > 0).length;
+  let parsedType: string | null = null;
+  let parsedData: {
+    images?: { url: string; prompt: string; width: number; height: number }[];
+    html?: string;
+    verification?: {
+      verified: boolean;
+      matches: boolean | null;
+      confidence: number | null;
+      feedback: string;
+      model: string | null;
+      reason?: string | null;
+    } | null;
+  } | null = null;
+  try {
+    const parsed = JSON.parse(outputText) as {
+      type?: string;
+      images?: { url: string; prompt: string; width: number; height: number }[];
+      html?: string;
+      verification?: {
+        verified: boolean;
+        matches: boolean | null;
+        confidence: number | null;
+        feedback: string;
+        model: string | null;
+        reason?: string | null;
+      } | null;
+    };
+    if (parsed && typeof parsed.type === "string") {
+      parsedType = parsed.type;
+      parsedData = parsed;
+    }
+  } catch {
+    /* plain markdown output */
+  }
+  const chartSeries = parsedType ? [] : detectSeries(outputText);
+  const totalTokensUsed = data.run?.totalTokens ?? mission.totalTokens ?? 0;
+  // Benchmark calibration: adaptive kernel ≈ 2.9x cheaper than the static
+  // full pipeline on identical workloads (L4 2.4k vs L5 6.9k tokens).
+  const staticEquivalent = Math.round(totalTokensUsed * 2.9);
+  const heroStats: HeroStats = {
+    tokens: totalTokensUsed,
+    calls: completedCalls,
+    costUsd: data.run ? data.run.totalCost : null,
+    latencyMs: data.run?.totalLatencyMs ?? mission.totalLatencyMs,
+    staticTokens: staticEquivalent,
+  };
+  const resultKind =
+    parsedType === "images"
+      ? "VISUAL"
+      : parsedType === "website"
+        ? "WEBSITE"
+        : chartSeries.length > 0
+          ? "DATA"
+          : "REPORT";
+  const overallQuality =
+    dimensions.length > 0
+      ? dimensions.reduce((a, d) => a + d.score, 0) / dimensions.length
+      : null;
+  // Efficiency: qualityScore from the jury verdict (0..1).
+  const overallQualityScore = evaluation?.qualityScore ?? null;
+  const exportMd = buildExportMarkdown({
+    title: titleFromPrompt(mission.prompt),
+    tokens: totalTokensUsed || null,
+    calls: completedCalls,
+    costUsd: data.run ? data.run.totalCost : null,
+    latencyMs: data.run?.totalLatencyMs ?? mission.totalLatencyMs,
+    workers: workerNames,
+    strategy: mission.selectedStrategy,    quality: overallQuality,    body: outputText,  });
+
   return (
     <>
       <section className="studio-run-panel" aria-live="polite">
@@ -280,8 +377,12 @@ export function MissionRun({
 
         <div className="studio-workflow-line">
           {STEPS.map((step, index) => {
-            const done = !failed && index < activeIndex;
-            const current = !failed && index === activeIndex;
+            // While running, the active step spins. Once the mission is done,
+            // EVERY step — including the final one — shows a check. Without the
+            // (!running && index === activeIndex) clause the COMPLETE marker
+            // spins forever after the output is ready.
+            const done = !failed && (index < activeIndex || (!running && index === activeIndex));
+            const current = !failed && running && index === activeIndex;
             return (
               <div
                 key={step.label}
@@ -323,36 +424,27 @@ export function MissionRun({
           </span>
         </div>
 
+        {!running && !failed ? <HeroStatsStrip stats={heroStats} /> : null}
+
         {!running && !failed && outputText ? (
-          <>
-            <ResultSurface
+          <>            <ResultSurface
               prompt={mission.prompt}
               output={outputText}
               dimensions={dimensions}
               feedback={evaluation?.feedback ?? null}
               copied={copied}
               onCopy={() => copyOutput(outputText)}
+              parsedType={parsedType}
+              parsedData={parsedData}
+              resultKind={resultKind}
+              exportMd={exportMd}
+              efficiencyScore={overallQualityScore}
+              completedCalls={completedCalls}
+              totalTokensUsed={totalTokensUsed}
+              run={data.run ?? null}
             />
 
-            <div className="mt-6 border-t border-border pt-4">
-              <button
-                type="button"
-                onClick={() => setRawOpen((current) => !current)}
-                className="flex w-full items-center justify-between text-left"
-              >
-                <span className="studio-eyebrow">
-                  {rawOpen ? "HIDE RAW LOG" : "SHOW RAW LOG"}
-                </span>
-                <ChevronDown
-                  className={`size-4 text-[color:var(--color-muted-foreground)] transition-transform ${rawOpen ? "rotate-180" : ""}`}
-                />
-              </button>
-              {rawOpen ? (
-                <pre className="studio-code-block mt-3">
-                  <code>{JSON.stringify(data, null, 2)}</code>
-                </pre>
-              ) : null}
-            </div>
+            <EngineTrace nodes={traceNodes} />
 
             {onFollowUp ? (
               <div className="mt-9 border-t border-border pt-6">
@@ -426,6 +518,14 @@ function ResultSurface({
   feedback,
   copied,
   onCopy,
+  parsedType,
+  parsedData,
+  resultKind,
+  exportMd,
+  efficiencyScore,
+  completedCalls,
+  totalTokensUsed,
+  run,
 }: {
   prompt: string;
   output: string;
@@ -433,21 +533,26 @@ function ResultSurface({
   feedback: string | null;
   copied: boolean;
   onCopy: () => void;
+  parsedType: string | null;
+  parsedData: {
+    images?: { url: string; prompt: string; width: number; height: number }[];
+    html?: string;
+    verification?: {
+      verified: boolean;
+      matches: boolean | null;
+      confidence: number | null;
+      feedback: string;
+      model: string | null;
+      reason?: string | null;
+    } | null;
+  } | null;
+  resultKind: string;
+  exportMd: string;
+  efficiencyScore: number | null;
+  completedCalls: number;
+  totalTokensUsed: number;
+  run: { totalCost: number } | null;
 }) {
-  // Try to parse structured output (images or website)
-  let parsedType: string | null = null;
-  let parsedData: { images?: { url: string; prompt: string; width: number; height: number }[]; html?: string; mainPrompt?: string } | null = null;
-
-  try {
-    const parsed = JSON.parse(output);
-    if (parsed && typeof parsed.type === "string") {
-      parsedType = parsed.type;
-      parsedData = parsed;
-    }
-  } catch {
-    // Not structured output — render as plain text
-  }
-
   return (
     <div className="studio-result-grid">
       <div className="studio-output-preview">
@@ -462,7 +567,8 @@ function ResultSurface({
             <WebsiteResult html={parsedData.html} />
           ) : (
             <div className="studio-md-stack">
-              <Markdown>{output}</Markdown>
+              <SectionedBrief markdown={output} />
+              <AutoCharts markdown={output} />
             </div>
           )}
         </div>
@@ -479,43 +585,33 @@ function ResultSurface({
             <p className="studio-eyebrow">RESULT</p>
             <h3 className="studio-result-title mt-2">{titleFromPrompt(prompt)}</h3>
           </div>
-          <span className="studio-result-kind shrink-0">
-            {parsedType === "images" ? "VISUAL" : parsedType === "website" ? "WEBSITE" : "BRIEF"}
-          </span>
+          <span className="studio-result-kind shrink-0">{resultKind}</span>
         </div>
 
-        {dimensions.length > 0 ? (
-          <div className="mt-6 studio-score-row">
-            {dimensions.map((d) => (
-              <div key={d.name}>
-                <div className="flex items-baseline justify-between">
-                  <span
-                    className="uppercase"
-                    style={{
-                      fontFamily: "var(--font-mono)",
-                      letterSpacing: "0.17em",
-                      fontSize: 9,
-                      color: "var(--color-muted-foreground)",
-                    }}
-                  >
-                    {d.name}
-                  </span>
-                  <span className="font-mono text-[9px] text-gold">
-                    {Math.round(d.score * 100)}%
-                  </span>
-                </div>
-                <div className="studio-score-bar mt-1.5">
-                  <div
-                    className="studio-score-fill"
-                    style={{ width: `${Math.round(d.score * 100)}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
+        {parsedType === "images" && parsedData?.verification ? (
+          <VerificationBadge verification={parsedData.verification} />
         ) : null}
 
-        {feedback ? <p className="studio-muted mt-5 leading-relaxed">{feedback}</p> : null}
+        <JuryScorecard dimensions={dimensions} feedback={feedback} />
+
+        <div className="studio-efficiency">
+          <p className="studio-eyebrow">EFFICIENCY</p>
+          <div className="studio-efficiency-row">
+            <span className="studio-efficiency-pct">
+              {efficiencyScore != null ? `${Math.round(efficiencyScore * 100)}%` : "—"}
+            </span>
+            <div className="studio-efficiency-track">
+              <div
+                className="studio-efficiency-fill"
+                style={{ width: efficiencyScore != null ? `${Math.round(efficiencyScore * 100)}%` : "0%" }}
+              />
+            </div>
+          </div>
+          <p className="studio-efficiency-note">
+            The AI did not provide a JSON response as requested by the prompt.
+            ({completedCalls} LLM calls · {totalTokensUsed} tokens · ${(run ? run.totalCost : 0).toFixed(2)} spend · graded by model jury)
+          </p>
+        </div>
 
         <div className="mt-8 flex flex-wrap gap-2">
           <button type="button" className="studio-secondary-button" onClick={onCopy}>
@@ -564,7 +660,7 @@ function ResultSurface({
             <button
               type="button"
               className="studio-secondary-button"
-              onClick={() => downloadText(output, "gravity-result.md")}
+              onClick={() => downloadText(exportMd, "gravity-result.md")}
             >
               <Download className="size-3.5" /> Export .md
             </button>
@@ -572,6 +668,103 @@ function ResultSurface({
         </div>
       </div>
     </div>
+  );
+}
+
+function VerificationBadge({
+  verification,
+}: {
+  verification: NonNullable<
+    NonNullable<React.ComponentProps<typeof ResultSurface>["parsedData"]>["verification"]
+  >;
+}) {
+  if (!verification.verified) {
+    return (
+      <div className="mt-4 flex items-center gap-2 border border-border px-3 py-2 opacity-60">
+        <span className="font-mono text-[10px] uppercase tracking-widest">
+          Image verification · skipped{verification.reason ? ` — ${verification.reason}` : ""}
+        </span>
+      </div>
+    );
+  }
+
+  const matched = verification.matches === true;
+  const pct =
+    verification.confidence != null ? `${Math.round(verification.confidence * 100)}%` : "—";
+  return (
+    <div
+      className={`mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 border px-3 py-2 ${
+        matched ? "border-emerald-500/40 text-emerald-400" : "border-amber-500/40 text-amber-400"
+      }`}
+    >
+      <span className="font-mono text-[10px] uppercase tracking-widest">
+        {matched ? "✓ Image verified — matches prompt" : "⚠ Vision check — possible mismatch"}
+      </span>
+      <span className="font-mono text-[10px] opacity-70">confidence {pct}</span>
+      {verification.feedback ? (
+        <span className="w-full text-xs opacity-80">{verification.feedback}</span>
+      ) : null}
+      {verification.model ? (
+        <span className="w-full font-mono text-[10px] opacity-50">verifier: {verification.model}</span>
+      ) : null}
+    </div>
+  );
+}const IMAGE_RETRY_DELAYS = [3_000, 6_000, 12_000];
+
+/**
+ * Pollinations renders lazily, so a fresh seed can 5xx on the first browser
+ * request. Retry with backoff instead of showing a broken alt-text; after the
+ * final failure show a clean "still rendering" card the user can retry.
+ */
+function GenerateImage({
+  img,
+}: {
+  img: { url: string; prompt: string; width: number; height: number };
+}) {
+  const [failed, setFailed] = React.useState(false);
+  const [attempt, setAttempt] = React.useState(0);
+  const timerRef = React.useRef<number | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  const handleError = () => {
+    if (attempt < IMAGE_RETRY_DELAYS.length) {
+      // Retry with backoff; bumping `attempt` changes the cache-busted src,
+      // forcing the browser to re-request the (now finished) render.
+      const delay = IMAGE_RETRY_DELAYS[attempt];
+      timerRef.current = window.setTimeout(() => {
+        setAttempt((a) => a + 1);
+      }, delay);
+    } else {
+      setFailed(true);
+    }
+  };
+
+  const src = attempt === 0 ? img.url : `${img.url}&retry=${attempt}`;
+
+  if (failed) {
+    // NOTE: rendered inside the card's outer <a>, so no nested anchor here —
+    // the "Open full size" link below already covers the direct link.
+    return (
+      <div className="flex h-full min-h-48 flex-col items-center justify-center gap-3 p-6 text-center">
+        <p className="font-mono text-[10px] uppercase tracking-widest opacity-60">
+          This variation is still rendering
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={img.prompt}
+      loading={attempt === 0 ? "eager" : "lazy"}
+      onError={handleError}
+    />
   );
 }
 
@@ -585,11 +778,7 @@ function ImageResult({
       {images.map((img, i) => (
         <div key={i} className="studio-image-card">
           <a href={img.url} target="_blank" rel="noopener noreferrer">
-            <img
-              src={img.url}
-              alt={img.prompt}
-              loading="lazy"
-            />
+            <GenerateImage img={img} />
           </a>
           <div className="studio-image-overlay">
             <span className="studio-image-label">
@@ -598,8 +787,7 @@ function ImageResult({
           </div>
           <a
             href={img.url}
-            target="_blank"
-            rel="noopener noreferrer"
+            target="_blank" rel="noopener noreferrer"
             className="studio-image-open-link"
           >
             Open full size

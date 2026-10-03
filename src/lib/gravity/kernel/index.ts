@@ -17,10 +17,17 @@ import {
   type RouteCandidate,
   type RoutingOutcome,
 } from "./routing";
+import {
+  modelCapabilityRegistry,
+  capabilitiesForStrategy,
+  requiredCapabilitiesForTask,
+  type ModelCapability,
+} from "./modelCapabilities";
 
 export { profileProblemState } from "./problemState";
 export { allocateIntelligence, strategyLevel } from "./allocation";
 export { capabilityRegistry } from "./capabilities";
+export { modelCapabilityRegistry, requiredCapabilitiesForTask } from "./modelCapabilities";
 export {
   globalRoutingPolicy,
   routesFromAllocation,
@@ -181,7 +188,25 @@ export function routeStrategyAdaptive(
     );
   }
 
-  // 3. Candidate routes from the allocated capability's supported methods.
+  // 3. MODEL CAPABILITY ELIGIBILITY CHECK (before optimization).
+  //    The senior's principle: capability eligibility must happen BEFORE
+  //    optimization. A cheap text model cannot be selected for image generation
+  //    just because its expected utility is attractive.
+  //
+  //    Determine which model capabilities this task requires, then filter the
+  //    strategy catalog to only strategies that have at least one eligible model.
+  const requiredModelCaps = requiredCapabilitiesForTask(
+    problemState.problemState.intent.taskType,
+    profile.wantsImage ?? false,
+    profile.wantsWebsite ?? false,
+  );
+  const eligibleStrategies = STRATEGY_CATALOG.filter((entry) => {
+    const neededCaps = capabilitiesForStrategy(entry.strategy);
+    const eligibleModels = modelCapabilityRegistry.eligible(neededCaps);
+    return eligibleModels.some((m) => m.available);
+  });
+
+  // 4. Candidate routes from the allocated capability's supported methods.
   //    Quality priors are context-aware: the least complex route WINS its prior
   //    when the problem is fully specified for it (least-complex-sufficient).
   const numericState =
@@ -200,7 +225,11 @@ export function routeStrategyAdaptive(
     if (entry.strategy === "statistical" && isTemporal) return { ...entry, expectedQuality: 84 };
     return entry;
   });
-  const routes = routesFromAllocation(allocation, catalog);
+  // Filter catalog to only strategies with eligible models (capability check).
+  const eligibleCatalog = catalog.filter((entry) =>
+    eligibleStrategies.some((es) => es.strategy === entry.strategy),
+  );
+  const routes = routesFromAllocation(allocation, eligibleCatalog);
   const fallbackRoutes: RouteCandidate[] = routes.length
     ? routes
     : [
@@ -222,7 +251,9 @@ export function routeStrategyAdaptive(
         },
       ];
 
-  // 4. Thompson Sampling picks the winner (learning policy, process-wide).
+  // 5. Thompson Sampling picks the winner (learning policy, process-wide).
+  //    Optimization happens ONLY after capability eligibility is established.
+  //    The bandit selects within the eligible set — never outside it.
   //    Decomposable multi-part analysis is pinned to deliberation (parallel
   //    specialists + synthesis); a cold-start bandit must not miss this shape.
   const parallelIntent =

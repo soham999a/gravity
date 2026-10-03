@@ -199,7 +199,7 @@ function ProfileTab({ email, createdAt }: { email: string | null; createdAt: str
     if (exporting) return;
     setExporting(true);
     try {
-      const res = await fetch("/api/missions", { cache: "no-store" });
+      const res = await fetch("/api/missions", { cache: "no-store", credentials: "include" });
       const json = res.ok
         ? ((await res.json()) as { missions?: unknown[] })
         : { missions: [] };

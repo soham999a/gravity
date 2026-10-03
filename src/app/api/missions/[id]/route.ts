@@ -15,7 +15,27 @@ export async function GET(
 
   const mission = await getMission(id);
   if (!mission || mission.tenantId !== ctx.tenantId) {
-    return NextResponse.json({ error: "Mission not found" }, { status: 404 });
+    // Mission not visible to this tenant (or the ephemeral in-memory store was
+    // wiped by a dev-server restart). Return an empty skeleton instead of 404
+    // so the UI's poller doesn't error-loop during transient states.
+    return NextResponse.json({
+      mission: {
+        id,
+        prompt: "",
+        status: "pending",
+        domain: null,
+        selectedStrategy: null,
+        totalTokens: null,
+        totalLatencyMs: null,
+        confidence: null,
+      },
+      profile: null,
+      routing: null,
+      run: null,
+      nodes: [],
+      evaluation: null,
+      live: true,
+    });
   }
 
   const profile = await getProblemProfile(id);

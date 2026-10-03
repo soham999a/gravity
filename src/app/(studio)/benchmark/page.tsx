@@ -77,7 +77,7 @@ export default function BenchmarkPage() {
 
   const load = React.useCallback(async () => {
     try {
-      const res = await fetch("/api/benchmark");
+      const res = await fetch("/api/benchmark", { credentials: "include" });
       if (!res.ok) return;
       const data = await res.json();
       setManifest(data.manifest ?? null);
@@ -108,7 +108,7 @@ export default function BenchmarkPage() {
     setPhase("running");
     setError(null);
     try {
-      const res = await fetch("/api/benchmark", {
+      const res = await fetch("/api/benchmark", { credentials: "include",
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

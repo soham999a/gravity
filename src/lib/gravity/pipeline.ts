@@ -16,6 +16,7 @@ import {
   createRoutingDecision,
 } from "@/lib/db-firestore";
 import { callLLM, isLLMConfigured } from "@/lib/gravity/llm";
+import { verifyImage, warmupImage } from "./verifyImage";
 import {
   routeStrategyAdaptive,
   toPersistedAdaptive,
@@ -63,7 +64,12 @@ const COMPUTATIONAL_RE =
 
 /** Detect image generation intent */
 const IMAGE_RE =
-  /\b(generate|create|make|draw|design|produce|build)\b.{0,30}\b(image|photo|picture|illustration|artwork|art|graphic|visual|logo|icon|banner|poster|wallpaper|render|scene|portrait|landscape|concept art|3d render)\b/i;
+  /\b(generate|create|make|draw|design|produce|build|paint|sketch|render|show)\b.{0,30}\b(image|images|photo|photos|picture|pictures|pic|pics|pix|img|illustration|artwork|art|graphic|visual|logo|icon|banner|poster|wallpaper|render|scene|portrait|landscape|concept art|3d render|drawing|painting|sketch)\b/i;
+
+/** Verb-only image intent — "draw an elephant", "paint a sunset over mountains".
+ *  These verbs strongly imply image output even without an explicit image noun. */
+const IMAGE_VERB_RE =
+  /\b(draw|paint|sketch|doodle|illustrate)\b\s+(?:me\s+)?(?:an?|the)?\s*[a-z]/i;
 
 /** Detect website generation intent */
 const WEBSITE_RE =
@@ -71,7 +77,7 @@ const WEBSITE_RE =
 
 /** Broader image keywords — user may say just "a cat in space" with image context */
 const IMAGE_KEYWORDS =
-  /\b(image|photo|picture|illustration|artwork|art|graphic|visual|logo|icon|banner|poster|wallpaper|render|scene|portrait|landscape|pixel|3d|2d|cartoon|anime|manga|sketch|painting|drawing)\b/i;
+  /\b(image|images|photo|photos|picture|pictures|pic|pics|pix|img|illustration|artwork|art|graphic|visual|logo|icon|banner|poster|wallpaper|render|scene|portrait|landscape|pixel|3d|2d|cartoon|anime|manga|sketch|painting|drawing|draw|paint)\b/i;
 
 const SCALE_RE = /\b\d+(?:\.\d+)?\s*(?:m|mm|k|b|million|billion|thousand|%|percent|x)\b|\b\d{2,}\b/gi;
 
@@ -97,11 +103,14 @@ export function profileProblem(prompt: string): ProfileResult {
   let dataType = "text";
   if (/sql|table|row|column|database|transaction|ledger/.test(lower)) dataType = "structured";
   else if (/time.?series|monthly|daily|trend|forecast|historical/.test(lower)) dataType = "time_series";
-  else if (/image|photo|video|visual/.test(lower)) dataType = "images";
+  else if (/image|images|photo|pic|pics|img|video|visual/.test(lower)) dataType = "images";
   else if (/document|pdf|report|file/.test(lower)) dataType = "documents";
   else if (/ and |,|\+/.test(lower) && words.length > 14) dataType = "mixed";
 
-  const wantsImage = IMAGE_RE.test(prompt) || (IMAGE_KEYWORDS.test(lower) && words.length < 20);
+  const wantsImage =
+    IMAGE_RE.test(prompt) ||
+    IMAGE_VERB_RE.test(prompt) ||
+    (IMAGE_KEYWORDS.test(lower) && words.length < 20);
   const wantsWebsite = WEBSITE_RE.test(prompt);
 
   const complexHits = COMPLEX_WORDS.filter((w) =>
@@ -750,6 +759,13 @@ export async function executeMission(missionId: string): Promise<void> {
 
       const images = generateImageVariations(cleanPrompt, 2);
 
+      // Pollinations renders lazily on first request — variation #2 (a fresh
+      // seed) often isn't ready when the browser asks for it and shows as a
+      // broken image. Warm it up server-side now so it's cached and ready.
+      if (images[1]) {
+        void warmupImage(images[1].url).catch(() => {});
+      }
+
       await executeNode({
         runId: run.id,
         name: "Image Generation",
@@ -778,6 +794,51 @@ export async function executeMission(missionId: string): Promise<void> {
           height: img.height,
         })),
         mainPrompt: cleanPrompt,
+      });
+
+      // ── IMAGE VERIFICATION (senior's 4th box) ──────────────────────────
+      // A separate vision model LOOKS at the generated image and judges
+      // whether it matches the user's request. The generator never grades
+      // its own homework. Runs after the output payload is built so the
+      // mission still completes even if verification is skipped.
+      const imagesPayload = JSON.parse(finalOutput) as {
+        images: { url: string }[];
+      };
+      let verification: import("./verifyImage").ImageVerification | null = null;
+      try {
+        verification = await verifyImage(
+          imagesPayload.images[0]?.url ?? "",
+          cleanPrompt,
+        );
+      } catch (err) {
+        console.warn("[pipeline] image verification error:", String(err).slice(0, 120));
+      }
+
+      await executeNode({
+        runId: run.id,
+        name: "Image Verification",
+        type: "image_generation",
+        stage: "L2 · Verify",
+        purpose: verification?.verified
+          ? `Vision model (${verification.model}) judged output vs prompt: ${verification.matches ? "MATCH" : "MISMATCH"} — ${verification.feedback}`
+          : `Verification skipped (${verification?.reason ?? "unknown"})`,
+        prompt: cleanPrompt.slice(0, 500),
+        outputOverride: JSON.stringify(verification ?? { verified: false }),
+      });
+
+      // Attach the verdict to the output payload the UI renders.
+      finalOutput = JSON.stringify({
+        ...imagesPayload,
+        verification: verification
+          ? {
+              verified: verification.verified,
+              matches: verification.matches,
+              confidence: verification.confidence,
+              feedback: verification.feedback,
+              model: verification.model,
+              reason: verification.reason ?? null,
+            }
+          : null,
       });
 
       await executeNode({

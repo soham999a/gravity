@@ -20,7 +20,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
   React.useEffect(() => {
     let cancelled = false;
-    fetch(`/api/missions/${id}`, { cache: "no-store" })
+    fetch(`/api/missions/${id}`, { cache: "no-store", credentials: "include" })
       .then((res) => (res.ok ? res.json() : null))
       .then((json: { mission?: { prompt: string } } | null) => {
         if (!cancelled && json?.mission?.prompt) setPrompt(json.mission.prompt);
@@ -34,7 +34,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const handleFollowUp = async (refinement: string) => {
     let original = "";
     try {
-      const res = await fetch(`/api/missions/${id}`, { cache: "no-store" });
+      const res = await fetch(`/api/missions/${id}`, { cache: "no-store", credentials: "include" });
       if (res.ok) original = ((await res.json()) as { mission: { prompt: string } }).mission.prompt;
     } catch {
       /* use refinement only */
@@ -49,12 +49,12 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     });
     if (!createRes.ok) throw new Error("Failed to start follow-up");
     const { missionId } = (await createRes.json()) as { missionId: string };
-    fetch(`/api/missions/${missionId}/execute`, { method: "POST" }).catch(() => {});
+    fetch(`/api/missions/${missionId}/execute`, { method: "POST", credentials: "include" }).catch(() => {});
     router.push(`/projects/${missionId}`);
   };
 
   const handleRetry = async () => {
-    await fetch(`/api/missions/${id}/execute`, { method: "POST" }).catch(() => {});
+    await fetch(`/api/missions/${id}/execute`, { method: "POST", credentials: "include" }).catch(() => {});
     // Force a remount so MissionRun re-fetches
     router.refresh();
   };
@@ -63,7 +63,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     if (deleting) return;
     setDeleting(true);
     try {
-      await fetch(`/api/missions/${id}`, { method: "DELETE" });
+      await fetch(`/api/missions/${id}`, { method: "DELETE", credentials: "include" });
       toast("Project deleted", "It's gone from your archive.", "success");
       router.push("/projects");
     } finally {

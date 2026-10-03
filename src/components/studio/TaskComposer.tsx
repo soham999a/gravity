@@ -96,6 +96,11 @@ export function TaskComposer({
       prompt.trim(),
       files.length > 0 ? files : undefined,
     );
+    // Clear the box after sending — ChatGPT-style. The submitted prompt is
+    // already captured by the parent (thread + mission), so keeping the old
+    // text here only forces manual deletion before the next task.
+    setPrompt("");
+    setFiles([]);
   };
 
   const totalSize = files.reduce((sum, f) => sum + new TextEncoder().encode(f.data).length, 0);

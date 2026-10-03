@@ -90,10 +90,11 @@ async function startMission(prompt: string, files?: CsvFile[]): Promise<string> 
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt, files }),
+    credentials: "include",
   });
   if (!res.ok) throw new Error(`Status ${res.status}`);
   const json = (await res.json()) as { missionId: string };
-  fetch(`/api/missions/${json.missionId}/execute`, { method: "POST" }).catch(() => {});
+  fetch(`/api/missions/${json.missionId}/execute`, { method: "POST", credentials: "include" }).catch(() => {});
   return json.missionId;
 }
 
@@ -206,7 +207,7 @@ function HomeContent() {
     if (!missionId) return;
     let original = "";
     try {
-      const res = await fetch(`/api/missions/${missionId}`, { cache: "no-store" });
+      const res = await fetch(`/api/missions/${missionId}`, { cache: "no-store", credentials: "include" });
       if (res.ok) original = ((await res.json()) as { mission: { prompt: string } }).mission.prompt;
     } catch {
       /* fall back to refinement only */
@@ -220,7 +221,7 @@ function HomeContent() {
 
   const handleRetry = async () => {
     if (!missionId) return;
-    await fetch(`/api/missions/${missionId}/execute`, { method: "POST" }).catch(() => {});
+    await fetch(`/api/missions/${missionId}/execute`, { method: "POST", credentials: "include" }).catch(() => {});
   };
 
   const pickExample = (prompt: string) => {

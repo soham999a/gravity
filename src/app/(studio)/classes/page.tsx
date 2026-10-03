@@ -61,7 +61,7 @@ export default function ClassesPage() {
   const [runAll, setRunAll] = React.useState(false);
 
   React.useEffect(() => {
-    fetch("/api/classes")
+    fetch("/api/classes", { credentials: "include" })
       .then((res) => res.json())
       .then((data: { classes: ClassDef[] }) => setDefs(data.classes ?? []))
       .catch(() => setDefs([]));
@@ -71,7 +71,7 @@ export default function ClassesPage() {
     setRuns((current) => ({ ...current, [id]: { phase: "running" } }));
     setOpen(id);
     try {
-      const res = await fetch("/api/classes", {
+      const res = await fetch("/api/classes", { credentials: "include",
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ classId: id }),

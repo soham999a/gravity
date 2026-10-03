@@ -56,7 +56,7 @@ export function CommandPalette() {
         inputRef.current?.focus();
       });
       if (!loaded) {
-        fetch("/api/missions", { cache: "no-store" })
+        fetch("/api/missions", { cache: "no-store", credentials: "include" })
           .then((res) => (res.ok ? res.json() : null))
           .then((json: { missions?: MissionHit[] } | null) => {
             setMissions(json?.missions ?? []);

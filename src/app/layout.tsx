@@ -34,7 +34,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       lang="en"
       className={`${instrument.variable} ${interTight.variable} ${plexMono.variable}`}
     >
-      <body className="min-h-screen">
+      {/* suppressHydrationWarning: browser extensions (Grammarly etc.) inject
+          attributes like data-gr-ext-installed into <body> before React
+          hydrates, causing a false-positive hydration mismatch. */}
+      <body className="min-h-screen" suppressHydrationWarning>
         {children}
         <Toaster />
       </body>

@@ -18,6 +18,13 @@ const MAX_CACHE = 200;
 
 let cached: MissionRow[] | null = null;
 
+/**
+ * Hard stop for polling once the API answers 401 — the user is signed out,
+ * so retrying every POLL_MS just spams the console with 401s.
+ * Reset by an explicit successful refresh (i.e. after signing in).
+ */
+let pollingStopped = false;
+
 function loadFromStorage(): MissionRow[] | null {
   if (cached) return cached;
   if (typeof window === "undefined") return null;
@@ -67,15 +74,26 @@ export function useMissionFeed() {
   const [live, setLive] = React.useState<boolean | null>(null);
 
   const refresh = React.useCallback(async () => {
+    if (pollingStopped) {
+      setLoading(false);
+      return true;
+    }
     let api: MissionRow[] = [];
     let ok = false;
+    let authError = false;
     try {
-      const res = await fetch("/api/missions", { cache: "no-store" });
+      const res = await fetch("/api/missions", { cache: "no-store", credentials: "include" });
       if (res.ok) {
         const json = (await res.json()) as { missions?: MissionRow[]; live?: boolean };
         api = json.missions ?? [];
         ok = true;
+        pollingStopped = false;
         setLive(Boolean(json.live));
+      } else if (res.status === 401) {
+        // Unauthenticated — hard-stop polling so the interval can't spam 401s.
+        authError = true;
+        pollingStopped = true;
+        setLive(false);
       }
     } catch {
       /* engine offline — fall through to cache */
@@ -87,16 +105,19 @@ export function useMissionFeed() {
       setRows(merged);
     }
     setLoading(false);
+    return authError;
   }, []);
 
   React.useEffect(() => {
     let cancelled = false;
-    const timer = window.setInterval(() => {
-      if (!cancelled) void refresh();
-    }, POLL_MS);
-    const raf = requestAnimationFrame(() => {
-      if (!cancelled) void refresh();
-    });
+
+    const tick = async () => {
+      if (cancelled || pollingStopped) return; // hard-stopped after 401
+      await refresh();
+    };
+
+    const timer = window.setInterval(tick, POLL_MS);
+    const raf = requestAnimationFrame(() => void tick());
     return () => {
       cancelled = true;
       window.clearInterval(timer);
