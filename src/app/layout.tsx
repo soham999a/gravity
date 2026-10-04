@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Instrument_Serif, Inter_Tight, IBM_Plex_Mono } from "next/font/google";
 import { Toaster } from "@/components/studio/toast";
+import { AuthCookieSync } from "@/components/auth/AuthCookieSync";
 import "./globals.css";
 
 const instrument = Instrument_Serif({
@@ -38,6 +39,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           attributes like data-gr-ext-installed into <body> before React
           hydrates, causing a false-positive hydration mismatch. */}
       <body className="min-h-screen" suppressHydrationWarning>
+        {/* Refreshes the fb-token cookie on every Firebase token rotation —
+            without it sessions die 401 exactly one hour after login. */}
+        <AuthCookieSync />
         {children}
         <Toaster />
       </body>

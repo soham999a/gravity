@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { displayPrompt } from "./gravity/promptText";
 
 export interface MissionRow {
   id: string;
@@ -31,6 +32,13 @@ function loadFromStorage(): MissionRow[] | null {
   try {
     const raw = window.localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
+    // Self-heal: caches written before sanitization embed whole uploaded
+    // files and can blow past the origin quota (kQuotaBytes), which also
+    // breaks Firebase's own storage. Drop oversized legacy caches.
+    if (raw.length > 1_500_000) {
+      window.localStorage.removeItem(CACHE_KEY);
+      return null;
+    }
     const parsed = JSON.parse(raw);
     cached = Array.isArray(parsed) ? (parsed as MissionRow[]) : null;
     return cached;
@@ -39,13 +47,23 @@ function loadFromStorage(): MissionRow[] | null {
   }
 }
 
+/**
+ * Prompts may embed whole uploaded files as [DATA:...] blocks. Caching them
+ * raw grew the mission cache by megabytes per CSV upload and exhausted the
+ * localStorage quota. The UI only ever renders displayPrompt() output, so
+ * cache the display-safe (small) form instead.
+ */
+function sanitizeForCache(row: MissionRow): MissionRow {
+  return { ...row, prompt: displayPrompt(row.prompt).slice(0, 300) };
+}
+
 function persist(rows: MissionRow[]) {
   cached = rows;
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(CACHE_KEY, JSON.stringify(rows));
+    window.localStorage.setItem(CACHE_KEY, JSON.stringify(rows.map(sanitizeForCache)));
   } catch {
-    /* storage unavailable */
+    /* storage unavailable or quota exceeded — cache is best-effort */
   }
 }
 
