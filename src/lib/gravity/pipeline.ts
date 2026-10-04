@@ -642,7 +642,7 @@ async function judgeOutput(missionPrompt: string, output: string): Promise<{ jud
 // Stale-mission watchdog: recover missions whose serverless function died
 // ---------------------------------------------------------------------------
 
-export async function failStaleMissions(): Promise<void> {
+export async function failStaleMissions(): Promise<number> {
   // Firestore doesn't have a simple "lt" with "inArray" easily,
   // so we query for active statuses and filter by time in JS.
   const { adminDb } = await import("@/lib/firebase-admin");
@@ -651,12 +651,13 @@ export async function failStaleMissions(): Promise<void> {
     .get();
   const cutoff = new Date(Date.now() - 3 * 60_000).toISOString();
   const stale = snap.docs.filter((d) => d.data().createdAt < cutoff);
-  if (stale.length === 0) return;
+  if (stale.length === 0) return 0;
   const batch = adminDb.batch();
   for (const doc of stale) {
     batch.update(doc.ref, { status: "failed", completedAt: new Date().toISOString() });
   }
   await batch.commit();
+  return stale.length;
 }
 
 // ---------------------------------------------------------------------------
@@ -1254,6 +1255,21 @@ export async function createMissionWithPlan(
       ...routing,
       selected: { ...routing.selected, strategy: forced as StrategyKind },
       reasoning: `User override via User Control — simulated as ${forced}. Kernel preference was ${routing.selected.strategy}. ${routing.reasoning}`,
+    };
+  }
+
+  // Trivial-prompt gate: a fresh tenant has no Thompson history, so "hi"
+  // could sample a multi-agent path — five serial LLM calls of pure waste
+  // (and past the 60s serverless window). Gate: no files + ≤2 words + heavy
+  // strategy → cheapest sufficient path.
+  const trivialWords = effectivePrompt.trim().split(/\s+/).filter(Boolean).length;
+  const HEAVY_STRATEGIES: StrategyKind[] = ["specialist_agent", "multi_agent", "advanced_reasoning", "human_review", "human"];
+  if (!ctx?.files?.length && trivialWords <= 2 && HEAVY_STRATEGIES.includes(routing.selected.strategy)) {
+    routing = {
+      ...routing,
+      selected: { ...routing.selected, strategy: "small_llm" },
+      escalationLevel: strategyLevel("small_llm"),
+      reasoning: `Trivial prompt (${trivialWords} word${trivialWords === 1 ? "" : "s"}) — gated to the minimal path instead of ${routing.selected.strategy}. ${routing.reasoning}`,
     };
   }
   await createRoutingDecision({

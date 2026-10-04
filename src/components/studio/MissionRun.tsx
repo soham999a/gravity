@@ -38,6 +38,7 @@ interface MissionData {
     confidence: number | null;
     totalTokens: number | null;
     totalLatencyMs: number | null;
+    createdAt: string | null;
     completedAt: string | null;
   };
   profile: {
@@ -180,6 +181,23 @@ export function MissionRun({
     }
   };
 
+  /** Renders a calm "still working" banner for legit long runs, and a
+   *  hard CONNECTION LOST banner only when the poll hit an actual network/
+   *  server error (not just because the mission is mid-flight). */
+  const elapsedAgo = (iso: string | null) => {
+    if (!iso) return null;
+    const s = Date.parse(iso);
+    if (!isFinite(s)) return null;
+    const ms = Date.now() - s;
+    if (ms < 0) return null;
+    const sec = Math.floor(ms / 1000);
+    if (sec < 60) return `${sec}s ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ${sec % 60}s ago`;
+    const hr = Math.floor(min / 60);
+    return `${hr}h ${min % 60}m ago`;
+  };
+
   const submitFollowUp = async () => {
     const text = refinement.trim();
     if (!text || !onFollowUp || followBusy) return;
@@ -234,6 +252,13 @@ export function MissionRun({
   const { mission, routing, nodes, evaluation, profile } = data;
   const running = ACTIVE.includes(mission.status);
   const failed = mission.status === "failed";
+  /** A mission that is still active more than 3 minutes in is orphaned —
+   *  the self-heal on /api/missions/:id should flip it to "failed". Until it
+   *  does, show a calm banner instead of the scary CONNECTION LOST screen. */
+  const orphaned =
+    running &&
+    Number.isFinite(Date.parse(mission.createdAt ?? "")) &&
+    Date.now() - Date.parse(mission.createdAt!) > 3 * 60_000;
   const activeIndex = STATUS_INDEX[mission.status] ?? 0;
 
   const synthesisNode =
@@ -249,6 +274,8 @@ export function MissionRun({
     }) ??
     [...nodes].reverse().find((n) => n.status === "completed" && (n.tokens ?? 0) > 0) ??
     [...nodes].reverse().find((n) => n.output);
+
+  const handledOrphan = orphaned && onRetry;
 
   const outputText = synthesisNode?.output ?? "";
   const workerNames = nodes.map((n) => n.name).filter(Boolean) as string[];
@@ -344,14 +371,22 @@ export function MissionRun({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="studio-eyebrow">
-              {failed ? "RUN FAILED" : running ? "GRAVITY IS WORKING" : "RESULT READY"}
+              {failed
+                ? "RUN FAILED"
+                : orphaned
+                  ? "STILL RUNNING — LONG MISSION"
+                  : running
+                    ? "GRAVITY IS WORKING"
+                    : "RESULT READY"}
             </p>
             <h2 className="studio-panel-title mt-2">
               {failed
                 ? "This path did not complete."
-                : running
-                  ? "Assembling the right intelligence."
-                  : "Your result is ready."}
+                : orphaned
+                  ? "This mission is taking longer than usual — GRAVITY is still working on it."
+                  : running
+                    ? "Assembling the right intelligence."
+                    : "Your result is ready."}
             </h2>
             <p className="studio-muted mt-3 max-w-xl">{displayPrompt(mission.prompt)}</p>
           </div>
@@ -387,6 +422,16 @@ export function MissionRun({
               </button>
             ) : null}
           </div>
+        ) : orphaned ? (
+          <div className="mt-6 border border-[color:var(--color-border)] bg-[color:var(--color-void)] p-5">
+            <p className="studio-muted leading-relaxed">
+              This mission has been running for over 3 minutes. That can happen on the deeper
+              intelligence paths (multi-agent, specialist). GRAVITY is still working on it —
+              if the run does not complete soon, the engine will mark it failed automatically
+              and you can try again.
+              {mission.createdAt ? ` Started ${elapsedAgo(mission.createdAt)}.` : ""}
+            </p>
+          </div>
         ) : null}
 
         <div className="studio-workflow-line">
@@ -395,7 +440,7 @@ export function MissionRun({
             // EVERY step — including the final one — shows a check. Without the
             // (!running && index === activeIndex) clause the COMPLETE marker
             // spins forever after the output is ready.
-            const done = !failed && (index < activeIndex || (!running && index === activeIndex));
+            const done = !failed && !orphaned && (index < activeIndex || (!running && index === activeIndex));
             const current = !failed && running && index === activeIndex;
             return (
               <div

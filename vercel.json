@@ -7,7 +7,7 @@
   "crons": [
     {
       "path": "/api/cron/stale-missions",
-      "schedule": "0 0 * * *"
+      "schedule": "*/10 * * * *"
     }
   ]
 }
