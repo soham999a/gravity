@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { verifyAuthToken } from "@/lib/api-auth";
-import { getMission, getProblemProfile, getRoutingDecision, getExecutionRuns, getExecutionNodes, getEvaluation, deleteMission } from "@/lib/db-firestore";
+import { getMission, getProblemProfile, getRoutingDecision, getExecutionRuns, getExecutionNodes, getEvaluation, deleteMission, updateMission } from "@/lib/db-firestore";
 
 export const dynamic = "force-dynamic";
 
@@ -25,9 +25,11 @@ export async function GET(
         status: "pending",
         domain: null,
         selectedStrategy: null,
+        escalationLevel: null,
         totalTokens: null,
         totalLatencyMs: null,
         confidence: null,
+        completedAt: null,
       },
       profile: null,
       routing: null,
@@ -36,6 +38,23 @@ export async function GET(
       evaluation: null,
       live: true,
     });
+  }
+
+  // Self-heal: the stale-mission cron runs once a day, so a run that died
+  // mid-execution (e.g. cut off by the 60s serverless window) would keep the
+  // UI spinning for up to 24h. If this mission is still active 3 minutes in,
+  // it is orphaned — mark it failed so the poller shows "Try again".
+  const STALE_AFTER_MS = 3 * 60_000;
+  const startedAt = Date.parse(mission.createdAt);
+  if (
+    ["pending", "profiling", "routing", "executing", "evaluating"].includes(mission.status) &&
+    Number.isFinite(startedAt) &&
+    Date.now() - startedAt > STALE_AFTER_MS
+  ) {
+    const completedAt = new Date().toISOString();
+    await updateMission(id, { status: "failed", completedAt });
+    mission.status = "failed";
+    mission.completedAt = completedAt;
   }
 
   const profile = await getProblemProfile(id);

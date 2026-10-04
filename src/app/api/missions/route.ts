@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import { verifyAuthToken } from "@/lib/api-auth";
 import { createMission, listMissions } from "@/lib/db-firestore";
-import { createMissionWithPlan } from "@/lib/gravity/pipeline";
+import { createMissionWithPlan, failStaleMissions } from "@/lib/gravity/pipeline";
 
 export const dynamic = "force-dynamic";
+
+// The vercel cron for stale missions only fires daily (Hobby-plan limit), so
+// sweep orphaned runs opportunistically here — at most once a minute per
+// instance — keeping the home feed statuses honest.
+let lastStaleSweep = 0;
 
 interface CsvFile {
   data: string;
@@ -15,6 +20,11 @@ export async function GET(request: Request) {
     const ctx = await verifyAuthToken(request as any);
     if (!ctx) {
       return NextResponse.json({ error: "unauthenticated", live: false }, { status: 401 });
+    }
+    const now = Date.now();
+    if (now - lastStaleSweep > 60_000) {
+      lastStaleSweep = now;
+      await failStaleMissions().catch(() => {});
     }
     const rows = await listMissions(ctx.tenantId);
     return NextResponse.json({ missions: rows, live: true });

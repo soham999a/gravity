@@ -20,8 +20,11 @@ const MAX_CACHE = 200;
 let cached: MissionRow[] | null = null;
 
 /**
- * Hard stop for polling once the API answers 401 — the user is signed out,
- * so retrying every POLL_MS just spams the console with 401s.
+ * Do NOT hard-stop on 401 — the /api/missions route is auth-gated, so a
+ * browser session that has expired (or is unauthenticated) still needs the
+ * feed to keep polling. The dashboard degrades to "no session" instead of
+ * freezing the whole screen at TASKS RUN 0/0. The live elapsed-time clock
+ * in MissionRun.tsx keeps the run panel honest while the session is dead.
  * Reset by an explicit successful refresh (i.e. after signing in).
  */
 let pollingStopped = false;
@@ -108,9 +111,10 @@ export function useMissionFeed() {
         pollingStopped = false;
         setLive(Boolean(json.live));
       } else if (res.status === 401) {
-        // Unauthenticated — hard-stop polling so the interval can't spam 401s.
+        // Unauthenticated — keep polling (the feed must not freeze the whole
+        // screen at TASKS RUN 0/0). The MissionRun live clock shows the real
+        // elapsed time while the session is dead.
         authError = true;
-        pollingStopped = true;
         setLive(false);
       }
     } catch {

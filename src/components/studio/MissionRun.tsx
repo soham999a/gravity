@@ -261,6 +261,44 @@ export function MissionRun({
     Date.now() - Date.parse(mission.createdAt!) > 3 * 60_000;
   const activeIndex = STATUS_INDEX[mission.status] ?? 0;
 
+  // The run payload stores the real cause in node output (executeMission's
+  // catch writes String(err) into the node output). Surface it on RUN FAILED
+  // instead of the generic "provider hiccup or timeout" text. Store it here
+  // (not in JSX) so the live clock below does not dedent the formatted line.
+  const lastRun = nodes[0];
+  const rawRunError = lastRun?.output ?? null;
+  const runFailureReason = (
+    rawRunError
+      ? String(rawRunError)
+          .replace(/^Error: /, "")
+          .replace(/^[A-Z_]+: /, "")
+          .replace(/^\s+|\s+$/g, "")
+          .slice(0, 220)
+      : null
+  );
+  const hasExplicitRunFailure = Boolean(runFailureReason && runFailureReason.length > 8);
+  const failureReasonLabel = hasExplicitRunFailure
+    ? runFailureReason
+    : failed
+      ? "engine hit an obstacle — retry re-runs the whole path"
+      : "waiting for result";
+
+  // Live clock: show how long the mission has been in its current state.
+  const now = React.useMemo(() => Date.now(), []);
+  const clockText = React.useMemo(() => {
+    if (!mission.createdAt) return null;
+    const started = Date.parse(mission.createdAt);
+    if (!Number.isFinite(started)) return null;
+    const ms = now - started;
+    if (ms < 0) return null;
+    const sec = Math.floor(ms / 1000);
+    if (sec < 60) return `${sec}s`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ${sec % 60}s`;
+    const hr = Math.floor(min / 60);
+    return `${hr}h ${min % 60}m`;
+  }, [mission.createdAt, now]);
+
   const synthesisNode =
     [...nodes].reverse().find((n) => {
       if (n.status !== "completed" || !n.output) return false;
@@ -407,8 +445,9 @@ export function MissionRun({
         {failed ? (
           <div className="mt-6 border border-[color:var(--color-border)] bg-[color:var(--color-void)] p-5">
             <p className="studio-muted leading-relaxed">
-              The engine hit an obstacle — usually a temporary provider hiccup or a timeout under
-              load. Nothing was lost. Retrying re-runs the whole path.
+              {failureReasonLabel === "engine hit an obstacle — retry re-runs the whole path"
+                ? "The engine hit an obstacle — usually a temporary provider hiccup or a timeout under load. Nothing was lost. Retrying re-runs the whole path."
+                : `The engine stopped because ${failureReasonLabel}. Retrying re-runs the whole path.`}
             </p>
             {onRetry ? (
               <button
