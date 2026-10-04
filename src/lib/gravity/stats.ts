@@ -707,10 +707,11 @@ export function formatReportForLLM(report: AnalysisReport, userPrompt: string): 
     lines.push("");
   }
 
-  // Sample rows
+  // Sample rows — grounding only. Kept tiny and compact so the synthesis LLM
+  // (and any trace view) never echoes bulk data back at the user.
   if (report.raw.length > 0) {
-    lines.push("--- SAMPLE DATA (first 5 rows) ---");
-    lines.push(JSON.stringify(report.raw, null, 1));
+    lines.push("--- SAMPLE DATA (first 3 rows, grounding only — never reproduce) ---");
+    lines.push(JSON.stringify(report.raw.slice(0, 3)));
     lines.push("");
   }
 

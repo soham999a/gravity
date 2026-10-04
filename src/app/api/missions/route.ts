@@ -31,7 +31,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "unauthenticated", live: false }, { status: 401 });
     }
 
-    const body = (await request.json()) as { prompt?: string; files?: CsvFile[] };
+    const body = (await request.json()) as {
+      prompt?: string;
+      files?: CsvFile[];
+      forceStrategy?: string;
+    };
     const prompt = body.prompt?.trim();
     if (!prompt) {
       return NextResponse.json({ error: "prompt is required" }, { status: 400 });
@@ -44,6 +48,7 @@ export async function POST(request: Request) {
       tenantId: ctx.tenantId,
       userId: ctx.uid,
       files: body.files,
+      forceStrategy: body.forceStrategy,
     });
 
     return NextResponse.json(

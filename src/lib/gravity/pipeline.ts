@@ -22,10 +22,12 @@ import {
   toPersistedAdaptive,
   recordPersistedOutcome,
   adaptationState,
+  strategyLevel,
   type AdaptiveRouteResult,
   type PersistedAdaptiveDecision,
 } from "@/lib/gravity/kernel";
 import { analyzeDataset, formatReportForLLM } from "@/lib/gravity/stats";
+import { stripDataMarkers } from "@/lib/gravity/promptText";
 import { generateImageVariations } from "@/lib/gravity/imagegen";
 import { generateWebsite } from "@/lib/gravity/sitegen";
 import type { StrategyKind } from "@/lib/gravity/types";
@@ -524,7 +526,7 @@ function deterministicArtifact(prompt: string): string {
     "PROBLEM SPECIFICATION — computed locally, zero model tokens.",
     "",
     "Objective:",
-    `  ${prompt.trim().replace(/\s+/g, " ").slice(0, 240)}`,
+    `  ${stripDataMarkers(prompt).replace(/\s+/g, " ").slice(0, 240)}`,
     "",
     "Entities identified:",
     ...(entities.length ? entities.map((e) => `  • ${e}`) : ["  • (none detected)"]),
@@ -611,7 +613,7 @@ async function judgeOutput(missionPrompt: string, output: string): Promise<{ jud
       tier: "general",
       system:
         'You grade AI-generated answers. Reply ONLY with JSON: {"accuracy":0-100,"depth":0-100,"clarity":0-100,"actionability":0-100,"verdict":"pass|review|fail","feedback":"one decisive sentence"}. Judge substance, not style.',
-      prompt: `TASK:\n${missionPrompt.slice(0, 1200)}\n\nANSWER:\n${output.slice(0, 6000)}`,
+      prompt: `TASK:\n${stripDataMarkers(missionPrompt).slice(0, 1200)}\n\nANSWER:\n${output.slice(0, 6000)}`,
       json: true,
       maxTokens: 260,
       temperature: 0.1,
@@ -741,7 +743,10 @@ export async function executeMission(missionId: string): Promise<void> {
             "4. Risk Assessment (based on anomalies and trends detected)\n" +
             "5. Top Recommendations (ranked by expected impact, with evidence)\n" +
             "Use the EXACT numbers from the statistical reports. Never fabricate data. " +
-            "If the report shows a trend, cite the slope and R². If anomalies exist, cite the z-scores.",
+            "If the report shows a trend, cite the slope and R². If anomalies exist, cite the z-scores.\n" +
+            "Formatting rules: write clean markdown with a ## heading per section. " +
+            "NEVER reproduce the raw dataset, sample rows, or full data tables — the user " +
+            "already has their data; present only analysis, insights and recommendations.",
           prompt: combinedReport,
           maxTokens: 1800,
           deadlineAt,
@@ -970,16 +975,17 @@ export async function executeMission(missionId: string): Promise<void> {
       });
 
       let aspects: { title: string; brief: string }[] = [];
+      const cleanBrief = stripDataMarkers(mission.prompt);
       const parsedPlan = safeJson<{ aspects?: { title?: string; brief?: string }[] }>(plan.output);
       aspects = (parsedPlan?.aspects ?? [])
         .filter((a) => a.title)
         .slice(0, 3)
-        .map((a) => ({ title: a.title!.slice(0, 60), brief: a.brief ?? mission.prompt }));
+        .map((a) => ({ title: a.title!.slice(0, 60), brief: a.brief ?? cleanBrief }));
       if (aspects.length === 0) {
         aspects = [
-          { title: "Root-cause analysis", brief: mission.prompt },
-          { title: "Strategic options", brief: mission.prompt },
-          { title: "Risk assessment", brief: mission.prompt },
+          { title: "Root-cause analysis", brief: cleanBrief },
+          { title: "Strategic options", brief: cleanBrief },
+          { title: "Risk assessment", brief: cleanBrief },
         ];
       }
 
@@ -1121,7 +1127,7 @@ export async function executeMission(missionId: string): Promise<void> {
     await createDecisionLedgerEntry({
       tenantId: mission.tenantId,
       missionId,
-      task: mission.prompt.slice(0, 300),
+      task: stripDataMarkers(mission.prompt).slice(0, 300),
       dataProfile: `${mission.domain ?? "general"} · ${mission.dataType ?? "text"}`,
       complexity: profileRow?.complexity ?? "medium",
       candidates: (decision?.candidates ?? []).map((cd: any) => ({
@@ -1181,6 +1187,10 @@ export async function createMissionWithPlan(
      *  the legacy heuristic router — the GRAVITY-STATIC benchmark baseline
      *  that isolates the architecture's contribution. */
     routing?: "adaptive" | "static";
+    /** User Control simulation: force a specific strategy so the user can
+     *  compare intelligence paths on the identical task. Invalid values are
+     *  ignored and adaptive routing is kept. */
+    forceStrategy?: string;
   },
 ) {
   // If files are provided, embed them in the prompt using the data marker
@@ -1227,13 +1237,25 @@ export async function createMissionWithPlan(
   // "static" pins the legacy heuristic router (kernel OFF) — the GRAVITY-STATIC
   // benchmark baseline that isolates the architecture's contribution.
   const isStaticRouting = ctx?.routing === "static";
-  const routing = isStaticRouting
+  let routing = isStaticRouting
     ? routeStrategy(profile)
     : routeStrategyAdaptive(
         profile,
         effectivePrompt,
         { tenant: ctx?.tenantId ?? null, domain: profile.domain },
       );
+
+  // User Control simulation: override the kernel's pick when the requested
+  // strategy is a real one, and record that the choice came from the user.
+  // Both route shapes (static + adaptive) carry the winner in `selected`.
+  const forced = ctx?.forceStrategy?.trim();
+  if (forced && typeof strategyLevel(forced as StrategyKind) === "number" && routing.selected.strategy !== forced) {
+    routing = {
+      ...routing,
+      selected: { ...routing.selected, strategy: forced as StrategyKind },
+      reasoning: `User override via User Control — simulated as ${forced}. Kernel preference was ${routing.selected.strategy}. ${routing.reasoning}`,
+    };
+  }
   await createRoutingDecision({
     missionId: mission.id,
     candidates: routing.candidates.map((cd) => ({

@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { ArrowRight, Pin, Search } from "lucide-react";
 import { useMissionFeed } from "@/lib/gravity-missions";
+import { displayPrompt } from "@/lib/gravity/promptText";
 
 function getPins(): string[] {
   try {
@@ -186,7 +187,7 @@ export default function ProjectsPage() {
                     <ArrowRight className="size-4 opacity-50 transition group-hover:text-gold group-hover:opacity-100" />
                   </div>
                   <p className="mt-8 line-clamp-4 font-serif text-lg leading-snug text-ivory">
-                    {mission.prompt}
+                    {displayPrompt(mission.prompt)}
                   </p>
                   <div className="mt-auto pt-7">
                     <div className="flex flex-wrap items-center gap-2">

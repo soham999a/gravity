@@ -23,6 +23,7 @@ import { MissionRun } from "@/components/studio/MissionRun";
 import { RightSideVisualField } from "@/components/gravity/RightSideVisualField";
 import { useGravityUser } from "@/lib/gravity-user";
 import { useMissionFeed } from "@/lib/gravity-missions";
+import { displayPrompt } from "@/lib/gravity/promptText";
 import { num } from "@/lib/utils";
 
 const FREE_LIMIT = 250_000;
@@ -85,11 +86,11 @@ function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-async function startMission(prompt: string, files?: CsvFile[]): Promise<string> {
+async function startMission(prompt: string, files?: CsvFile[], forceStrategy?: string | null): Promise<string> {
   const res = await fetch("/api/missions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, files }),
+    body: JSON.stringify({ prompt, files, forceStrategy: forceStrategy ?? undefined }),
     credentials: "include",
   });
   if (!res.ok) throw new Error(`Status ${res.status}`);
@@ -224,6 +225,23 @@ function HomeContent() {
     await fetch(`/api/missions/${missionId}/execute`, { method: "POST", credentials: "include" }).catch(() => {});
   };
 
+  // User Control simulation: re-run the exact original prompt (data files
+  // included) through a forced strategy and view the new run.
+  const handleSimulate = async (strategy: string | null) => {
+    if (!missionId) return;
+    let original = "";
+    try {
+      const res = await fetch(`/api/missions/${missionId}`, { cache: "no-store", credentials: "include" });
+      if (res.ok) original = ((await res.json()) as { mission: { prompt: string } }).mission.prompt;
+    } catch {
+      /* no original — nothing to simulate */
+    }
+    if (!original) return;
+    const id = await startMission(original, undefined, strategy);
+    setThread((prev) => [...prev, { id, prompt: original }]);
+    setMissionId(id);
+  };
+
   const pickExample = (prompt: string) => {
     const remount = prompt === "" ? `example-${(remountRef.current += 1)}` : prompt;
     setPrefill(remount);
@@ -315,7 +333,7 @@ function HomeContent() {
                   >
                     <span className="studio-thread-index">{String(index + 1).padStart(2, "0")}</span>
                     <span className="min-w-0 flex-1 truncate text-left text-sm text-[color:var(--color-ivory-dim)]">
-                      {turn.prompt}
+                      {displayPrompt(turn.prompt)}
                     </span>
                     {latest ? <span className="studio-example-chip !border-gold/40 !text-gold">LATEST</span> : null}
                     {active ? (
@@ -336,6 +354,7 @@ function HomeContent() {
               onFollowUp={handleFollowUp}
               onRetry={handleRetry}
               onStatus={(status) => updateLocalStatus(missionId, status)}
+              onSimulate={handleSimulate}
             />
           </div>
         ) : null}
@@ -483,7 +502,7 @@ function HomeContent() {
                       {done ? "COMPLETE" : item.status.toUpperCase()} · {timeAgo(item.createdAt)}
                     </p>
                     <p className="mt-3 truncate text-sm leading-6 text-[color:var(--color-ivory-dim)]">
-                      {item.prompt}
+                      {displayPrompt(item.prompt)}
                     </p>
                   </div>
                   <ArrowRight className="size-4 shrink-0 text-[color:var(--color-muted-foreground)]" />
@@ -531,7 +550,7 @@ function HomeContent() {
                       }`}
                     />
                     <span className="studio-timeline-body">
-                      <p className="studio-timeline-prompt">{item.prompt}</p>
+                      <p className="studio-timeline-prompt">{displayPrompt(item.prompt)}</p>
                       <p className="studio-timeline-meta">
                         {done ? "COMPLETE" : failed ? "FAILED" : item.status.toUpperCase()}
                         {item.selectedStrategy ? ` · ${item.selectedStrategy.replaceAll("_", " ")}` : ""}

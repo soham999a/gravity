@@ -7,6 +7,7 @@ import { MissionRun } from "@/components/studio/MissionRun";
 import { RightSideVisualField } from "@/components/gravity/RightSideVisualField";
 import { useGravityUser } from "@/lib/gravity-user";
 import { toast } from "@/components/studio/toast";
+import { displayPrompt } from "@/lib/gravity/promptText";
 import { ArrowLeft, Trash2 } from "lucide-react";
 import Link from "next/link";
 
@@ -59,6 +60,29 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     router.refresh();
   };
 
+  // User Control simulation: re-run the original prompt (with embedded data)
+  // through a forced strategy and open the new run.
+  const handleSimulate = async (strategy: string | null) => {
+    let original = "";
+    try {
+      const res = await fetch(`/api/missions/${id}`, { cache: "no-store", credentials: "include" });
+      if (res.ok) original = ((await res.json()) as { mission: { prompt: string } }).mission.prompt;
+    } catch {
+      /* no original — nothing to simulate */
+    }
+    if (!original) return;
+    const createRes = await fetch("/api/missions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: original, forceStrategy: strategy ?? undefined }),
+      credentials: "include",
+    });
+    if (!createRes.ok) throw new Error("Failed to start simulation");
+    const { missionId } = (await createRes.json()) as { missionId: string };
+    fetch(`/api/missions/${missionId}/execute`, { method: "POST", credentials: "include" }).catch(() => {});
+    router.push(`/projects/${missionId}`);
+  };
+
   const deleteMission = async () => {
     if (deleting) return;
     setDeleting(true);
@@ -102,7 +126,9 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
             <p className="studio-eyebrow mt-8">PROJECT</p>
             <h1 className="studio-hero-title mt-3">
               {prompt ? (
-                <span className="line-clamp-3">{prompt}</span>
+                // Display-only: the raw prompt (with embedded file data) is
+                // still used verbatim for follow-up context below.
+                <span className="line-clamp-3">{displayPrompt(prompt)}</span>
               ) : (
                 <span>Project</span>
               )}
@@ -111,7 +137,12 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           <RightSideVisualField />
         </div>
       </section>
-      <MissionRun missionId={id} onFollowUp={handleFollowUp} onRetry={handleRetry} />
+      <MissionRun
+        missionId={id}
+        onFollowUp={handleFollowUp}
+        onRetry={handleRetry}
+        onSimulate={handleSimulate}
+      />
 
       {confirmOpen ? (
         <div className="studio-dialog-overlay" role="dialog" aria-modal="true" aria-label="Delete project">

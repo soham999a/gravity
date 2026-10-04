@@ -24,6 +24,8 @@ import {
   type HeroStats,
   type TraceNode,
 } from "@/components/studio/ResultPortal";
+import { ResultWindow } from "./ResultWindow";
+import { displayPrompt, stripDataMarkers } from "@/lib/gravity/promptText";
 
 interface MissionData {
   mission: {
@@ -32,9 +34,11 @@ interface MissionData {
     status: string;
     domain: string | null;
     selectedStrategy: string | null;
+    escalationLevel: number | string | null;
+    confidence: number | null;
     totalTokens: number | null;
     totalLatencyMs: number | null;
-    confidence: number | null;
+    completedAt: string | null;
   };
   profile: {
     dataType: string | null;
@@ -60,6 +64,7 @@ interface MissionData {
     qualityScore: number | null;
     dimensions: { name: string; score: number }[] | null;
     feedback: string | null;
+    outputVerdict?: string | null;
   } | null;
   run: {
     status: string;
@@ -89,7 +94,9 @@ const STATUS_INDEX: Record<string, number> = {
 };
 
 function titleFromPrompt(prompt: string): string {
-  const clean = prompt.replace(/\s+/g, " ").trim();
+  // Titles come from the stored prompt, which may embed uploaded files as
+  // [DATA:csv] blocks — those must never appear in a title.
+  const clean = stripDataMarkers(prompt).replace(/\s+/g, " ").trim();
   return clean.length > 64 ? `${clean.slice(0, 61)}…` : clean || "A considered response";
 }
 
@@ -108,6 +115,7 @@ export function MissionRun({
   onFollowUp,
   onRetry,
   onStatus,
+  onSimulate,
 }: {
   missionId: string;
   /** Runs a refinement as a brand-new task seeded with the original context. */
@@ -116,6 +124,9 @@ export function MissionRun({
   onRetry?: () => Promise<void>;
   /** Receives the live mission status on every poll tick (pending → … → completed/failed). */
   onStatus?: (status: string) => void;
+  /** User Control simulation: re-runs this task through the given strategy
+   *  (null = let the kernel decide again). */
+  onSimulate?: (strategy: string | null) => Promise<void>;
 }) {
   const [data, setData] = React.useState<MissionData | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -242,6 +253,9 @@ export function MissionRun({
   const outputText = synthesisNode?.output ?? "";
   const workerNames = nodes.map((n) => n.name).filter(Boolean) as string[];
   const dimensions = (evaluation?.dimensions ?? []).filter((d) => d.score > 0).slice(0, 4);
+  // User Control: strategies the kernel considered, deduped — the simulate
+  // drawer lets the user force any of them on the identical task.
+  const strategies = [...new Set((routing?.candidates ?? []).map((c) => c.strategy).filter(Boolean))];
 
   // --- Result portal data: hero stats, kind detection, engine trace ---
   const traceNodes: TraceNode[] = nodes.map((n) => ({
@@ -339,7 +353,7 @@ export function MissionRun({
                   ? "Assembling the right intelligence."
                   : "Your result is ready."}
             </h2>
-            <p className="studio-muted mt-3 max-w-xl">{mission.prompt}</p>
+            <p className="studio-muted mt-3 max-w-xl">{displayPrompt(mission.prompt)}</p>
           </div>
           <span
             className={`studio-status-pill ${
@@ -432,6 +446,11 @@ export function MissionRun({
               output={outputText}
               dimensions={dimensions}
               feedback={evaluation?.feedback ?? null}
+              evaluation={evaluation}
+              mission={mission}
+              nodes={traceNodes}
+              strategies={strategies}
+              onSimulate={onSimulate}
               copied={copied}
               onCopy={() => copyOutput(outputText)}
               parsedType={parsedType}
@@ -444,7 +463,9 @@ export function MissionRun({
               run={data.run ?? null}
             />
 
-            <EngineTrace nodes={traceNodes} />
+            {/* Text/data results render their own collapsible trace inside
+                ResultWindow; only image/website results need it here. */}
+            {parsedType ? <EngineTrace nodes={traceNodes} /> : null}
 
             {onFollowUp ? (
               <div className="mt-9 border-t border-border pt-6">
@@ -489,7 +510,7 @@ export function MissionRun({
       <HowWorked
         open={howOpen}
         onToggle={() => setHowOpen((current) => !current)}
-        task={mission.prompt}
+        task={displayPrompt(mission.prompt)}
         strategy={mission.selectedStrategy}
         profile={
           profile
@@ -516,6 +537,11 @@ function ResultSurface({
   output,
   dimensions,
   feedback,
+  evaluation,
+  mission,
+  nodes,
+  strategies,
+  onSimulate,
   copied,
   onCopy,
   parsedType,
@@ -531,6 +557,16 @@ function ResultSurface({
   output: string;
   dimensions: { name: string; score: number }[];
   feedback: string | null;
+  evaluation: {
+    qualityScore: number | null;
+    dimensions: { name: string; score: number }[] | null;
+    feedback: string | null;
+    outputVerdict?: string | null;
+  } | null;
+  mission: MissionData["mission"];
+  nodes: TraceNode[];
+  strategies: string[];
+  onSimulate?: (strategy: string | null) => Promise<void>;
   copied: boolean;
   onCopy: () => void;
   parsedType: string | null;
@@ -551,8 +587,45 @@ function ResultSurface({
   efficiencyScore: number | null;
   completedCalls: number;
   totalTokensUsed: number;
-  run: { totalCost: number } | null;
+  run: { totalCost: number; totalTokens: number; totalLatencyMs: number; status: string } | null;
 }) {
+  // Text/data results get the full-width result window (senior spec: no right
+  // column; metadata in horizontal containers below the output; User Control
+  // for simulating other intelligence paths). Image/website results keep the
+  // dedicated renderers below.
+  if (!parsedType) {
+    return (
+      <ResultWindow
+        title={titleFromPrompt(prompt)}
+        output={output}
+        resultKind={resultKind}
+        evaluation={{
+          qualityScore: evaluation?.qualityScore ?? null,
+          dimensions,
+          feedback,
+          outputVerdict: evaluation?.outputVerdict ?? null,
+        }}
+        mission={{
+          selectedStrategy: mission.selectedStrategy,
+          escalationLevel: mission.escalationLevel,
+          confidence: mission.confidence,
+          totalTokens: mission.totalTokens,
+          totalLatencyMs: mission.totalLatencyMs,
+          completedAt: mission.completedAt,
+          domain: mission.domain,
+        }}
+        run={run}
+        nodes={nodes}
+        totalTokensUsed={totalTokensUsed}
+        completedCalls={completedCalls}
+        copied={copied}
+        onCopy={onCopy}
+        exportMd={exportMd}
+        strategies={strategies}
+        onSimulate={onSimulate}
+      />
+    );
+  }
   return (
     <div className="studio-result-grid">
       <div className="studio-output-preview">

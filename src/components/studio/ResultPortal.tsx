@@ -119,15 +119,29 @@ interface BriefSection {
 
 function splitIntoSections(md: string): BriefSection[] {
   const lines = md.replace(/\r\n/g, "\n").split("\n");
-  const heading = /^(#{1,4})\s+(.*)$|^\*\*(\d[^*]*?)\*\*\s*$|^(\d{1,2})\.\s+(.+)$/;
+  const heading =
+    /^(#{1,4})\s+(.*)$|^(\d{1,2})[.)]\s+(.+)$|^\*\*([^*]+?)\*\*\s*:?\s*$/;
   const sections: BriefSection[] = [];
   let current: BriefSection | null = null;
 
   for (const line of lines) {
     const m = line.match(heading);
-    if (m) {
-      const rawTitle = (m[2] ?? m[3] ?? `${m[4]}. ${m[5]}`).trim();
-      const cleanedTitle = rawTitle.replace(/^#+\s*/, "").replace(/^\d+\.\s*/, "");
+    // A numbered "1. Title" line only starts a new section when it is short
+    // and title-like. Long numbered lines are body list items (ranked
+    // recommendations etc.) and must stay inside the current section.
+    const numbered = m?.[3] != null;
+    const titleLike = !numbered || line.trim().length <= 90;
+    if (m && titleLike) {
+      const rawTitle = (m[2] ?? m[4] ?? m[5] ?? "").trim();
+      // Titles never show markdown punctuation — a raw `**` in a heading
+      // reads as a low-quality product.
+      const cleanedTitle = rawTitle
+        .replace(/^#+\s*/, "")
+        .replace(/\*+/g, "")
+        .replace(/`+/g, "")
+        .replace(/^\d+[.)]\s*/, "")
+        .replace(/[:：]\s*$/, "")
+        .trim();
       current = { title: cleanedTitle, body: "" };
       sections.push(current);
       continue;
@@ -196,14 +210,23 @@ export function MarkdownLite({ children }: { children: string }) {
       /(https?:\/\/[^\s<>"')]+)/g,
       '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>',
     );
-    // lists
-    out = out.replace(/(^|\n)((?:[-*]\s[^\n]+\n?)+)/g, (_m, p1, block: string) => {
+    // lists — bullets tolerate indentation ("  * Evidence: …") so model
+    // output never leaks raw asterisks, and numbered runs become <ol>.
+    out = out.replace(/(^|\n)[ \t]*((?:[-*+]\s+[^\n]+\n?)+)/g, (_m, p1, block: string) => {
       const items = block
         .trim()
         .split("\n")
-        .map((l) => l.replace(/^[-*]\s*/, "").trim())
+        .map((l) => l.replace(/^\s*[-*+]\s*/, "").trim())
         .filter(Boolean);
       return `${p1}<ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul>`;
+    });
+    out = out.replace(/(^|\n)[ \t]*((?:\d{1,2}[.)]\s+[^\n]+\n?)+)/g, (_m, p1, block: string) => {
+      const items = block
+        .trim()
+        .split("\n")
+        .map((l) => l.replace(/^\s*\d{1,2}[.)]\s*/, "").trim())
+        .filter(Boolean);
+      return `${p1}<ol>${items.map((i) => `<li>${i}</li>`).join("")}</ol>`;
     });
     // paragraphs
     out = out
