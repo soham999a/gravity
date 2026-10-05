@@ -27,7 +27,18 @@ export const metadata: Metadata = {
   title: "GRAVITY Studio — Intelligence, assembled.",
   description:
     "A simple surface for creating, analyzing, and deciding. State an intent — GRAVITY assembles the right intelligence behind it.",
+  metadataBase: new URL("https://gravity.matrka.net"),
+  openGraph: {
+    title: "GRAVITY Studio — Intelligence, assembled.",
+    description: "State an intent — GRAVITY assembles the right intelligence behind it.",
+    url: "https://gravity.matrka.net",
+    siteName: "GRAVITY Studio",
+    type: "website",
+  },
+  robots: { index: true, follow: true },
 };
+
+export const viewport = { themeColor: "#080808" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

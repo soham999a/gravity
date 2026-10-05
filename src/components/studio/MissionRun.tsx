@@ -155,7 +155,11 @@ export function MissionRun({
         setError(null);
         onStatusRef.current?.(json.mission.status);
         if (ACTIVE.includes(json.mission.status)) {
-          timer = setTimeout(poll, 1600);
+          // Snappy first 15s (900ms), then back off to 1600ms — result
+          // appears ~0.7s sooner on typical 4-8s missions.
+          const age = Date.parse(json.mission.createdAt ?? "") || Date.now();
+          const elapsed = Date.now() - age;
+          timer = setTimeout(poll, elapsed < 15_000 ? 900 : 1600);
         }
       } catch (err) {
         if (!cancelled) setError(String(err));
@@ -170,6 +174,31 @@ export function MissionRun({
       cancelAnimationFrame(reset);
     };
   }, [missionId]);
+
+  // Live clock: show how long the mission has been in its current state.
+  // NOTE: all hooks must stay above every early return — otherwise React sees
+  // a different hook order once `data` loads (Rules of Hooks).
+  const missionCreatedAt = data?.mission.createdAt ?? null;
+  const missionStatus = data?.mission.status ?? null;
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (!missionCreatedAt || !missionStatus || !ACTIVE.includes(missionStatus)) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [missionCreatedAt, missionStatus]);
+  const clockText = React.useMemo(() => {
+    if (!missionCreatedAt) return null;
+    const started = Date.parse(missionCreatedAt);
+    if (!Number.isFinite(started)) return null;
+    const ms = now - started;
+    if (ms < 0) return null;
+    const sec = Math.floor(ms / 1000);
+    if (sec < 60) return `${sec}s`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ${sec % 60}s`;
+    const hr = Math.floor(min / 60);
+    return `${hr}h ${min % 60}m`;
+  }, [missionCreatedAt, now]);
 
   const copyOutput = async (text: string) => {
     try {
@@ -282,22 +311,6 @@ export function MissionRun({
     : failed
       ? "engine hit an obstacle — retry re-runs the whole path"
       : "waiting for result";
-
-  // Live clock: show how long the mission has been in its current state.
-  const now = React.useMemo(() => Date.now(), []);
-  const clockText = React.useMemo(() => {
-    if (!mission.createdAt) return null;
-    const started = Date.parse(mission.createdAt);
-    if (!Number.isFinite(started)) return null;
-    const ms = now - started;
-    if (ms < 0) return null;
-    const sec = Math.floor(ms / 1000);
-    if (sec < 60) return `${sec}s`;
-    const min = Math.floor(sec / 60);
-    if (min < 60) return `${min}m ${sec % 60}s`;
-    const hr = Math.floor(min / 60);
-    return `${hr}h ${min % 60}m`;
-  }, [mission.createdAt, now]);
 
   const synthesisNode =
     [...nodes].reverse().find((n) => {
@@ -438,7 +451,7 @@ export function MissionRun({
             }`}
           >
             {!running && !failed ? <span className="status-dot" /> : null}
-            {running ? `${mission.status.toUpperCase()}…` : failed ? "FAILED" : "COMPLETE"}
+            {running ? `${mission.status.toUpperCase()}…${clockText ? ` · ${clockText}` : ""}` : failed ? "FAILED" : "COMPLETE"}
           </span>
         </div>
 

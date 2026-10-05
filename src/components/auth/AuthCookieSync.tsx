@@ -25,6 +25,12 @@ export function AuthCookieSync() {
         user
           .getIdToken()
           .then((token) => {
+            // Prefer HttpOnly server cookie; keep JS cookie as dev fallback.
+            fetch("/api/auth/session", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ idToken: token }),
+            }).catch(() => {});
             document.cookie = `fb-token=${token}; path=/; max-age=3600; SameSite=Lax${secure}`;
           })
           .catch(() => {

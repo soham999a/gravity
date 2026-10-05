@@ -165,6 +165,12 @@ interface SmartProfile extends ProfileResult {
 async function profileProblemSmart(prompt: string): Promise<SmartProfile> {
   const baseline = profileProblem(prompt);
   if (!isLLMConfigured()) return { ...baseline, profilerUsedLlm: false };
+  // Fast path: short, low-complexity prompts never benefit from an LLM
+  // re-profile — skip the extra round-trip (≈0.5-3s saved on every simple task).
+  const words = prompt.trim().split(/\s+/).length;
+  if (words < 20 && baseline.complexity === "low" && !baseline.wantsImage && !baseline.wantsWebsite) {
+    return { ...baseline, profilerUsedLlm: false };
+  }
 
   try {
     const res = await callLLM({
@@ -175,7 +181,7 @@ async function profileProblemSmart(prompt: string): Promise<SmartProfile> {
       json: true,
       maxTokens: 220,
       temperature: 0.1,
-      timeoutMs: 10_000,
+      timeoutMs: 4000,
     });
 
     const parsed = safeJson<Partial<ProfileResult>>(res.text);
@@ -617,7 +623,7 @@ async function judgeOutput(missionPrompt: string, output: string): Promise<{ jud
       json: true,
       maxTokens: 260,
       temperature: 0.1,
-      timeoutMs: 18_000,
+      timeoutMs: 10_000,
     });
     const parsed = safeJson<JudgeVerdict>(res.text);
     if (!parsed || typeof parsed.accuracy !== "number") return { judge: null, usedLlm: false };

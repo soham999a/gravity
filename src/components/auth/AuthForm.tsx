@@ -67,6 +67,17 @@ export function AuthForm({ mode = "login" }: { mode?: "login" | "signup" }) {
       }
 
       const idToken = await userCredential.user.getIdToken();
+      // Server sets HttpOnly fb-token cookie (XSS-safe). Keep document.cookie
+      // fallback so localhost dev without Admin creds still works.
+      try {
+        await fetch("/api/auth/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken }),
+        });
+      } catch {
+        /* session endpoint unavailable — fallback below */
+      }
       document.cookie = `fb-token=${idToken}; path=/; max-age=3600; SameSite=Lax`;
 
       if (mode === "signup") {

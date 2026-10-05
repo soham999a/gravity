@@ -20,6 +20,10 @@ export interface AuthContext {
 
 const DEFAULT_TENANT = "default";
 
+function isProduction(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+
 async function getOrCreateUser(uid: string, email: string, name: string | null): Promise<string> {
   if (!isFirebaseReady()) return DEFAULT_TENANT;
 
@@ -67,6 +71,8 @@ async function getOrCreateUser(uid: string, email: string, name: string | null):
     return tenantId;
   } catch (err) {
     console.error("[api-auth] Firestore provisioning failed:", String(err).slice(0, 200));
+    // Fail closed in production so tenants never silently collapse into "default".
+    if (isProduction() && process.env.ALLOW_MEM_FALLBACK !== "1") throw err;
     return DEFAULT_TENANT;
   }
 }
@@ -119,7 +125,9 @@ export async function verifyAuthToken(request: NextRequest): Promise<AuthContext
     }
   }
 
-  // Path 2: Manual JWT decode (no private key needed)
+  // Path 2: Manual JWT decode — DEV ONLY. Production must cryptographically
+  // verify via Admin SDK above. Allowing this in prod lets anyone forge fb-token.
+  if (isProduction() && process.env.ALLOW_UNSAFE_AUTH !== "1") return null;
   const decoded = decodeFirebaseToken(idToken);
   if (!decoded) return null;
 

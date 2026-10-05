@@ -27,6 +27,14 @@ function useFirestore(): boolean {
   }
 }
 
+/**
+ * Strict DB mode: in production we NEVER silently fall back to in-memory.
+ * Set ALLOW_MEM_FALLBACK=1 only for emergency degraded mode.
+ */
+export function isStrictDb(): boolean {
+  return process.env.NODE_ENV === "production" && process.env.ALLOW_MEM_FALLBACK !== "1";
+}
+
 // ---------------------------------------------------------------------------
 // In-memory fallback store
 // ---------------------------------------------------------------------------
@@ -62,6 +70,7 @@ export async function getOrCreateTenant(slug: string, name: string): Promise<Ten
       await col("tenants").doc(id).set(tenant);
       return tenant;
     } catch (err) {
+      if (isStrictDb()) throw err;
       console.warn("[db] Firestore tenants failed, using in-memory:", String(err).slice(0, 120));
     }
   }
@@ -117,6 +126,7 @@ export async function getOrCreateUser(
       await col("users").doc(uid).set(user);
       return user;
     } catch (err) {
+      if (isStrictDb()) throw err;
       console.warn("[db] Firestore users failed, using in-memory:", String(err).slice(0, 120));
     }
   }
@@ -173,6 +183,7 @@ export async function createMission(data: Omit<MissionDoc, "id" | "createdAt">):
       await col("missions").doc(id).set(mission);
       return mission;
     } catch (err) {
+      if (isStrictDb()) throw err;
       console.warn("[db] Firestore missions.create failed, using in-memory:", String(err).slice(0, 120));
     }
   }
@@ -187,6 +198,7 @@ export async function getMission(id: string): Promise<MissionDoc | null> {
       if (!doc.exists) return null;
       return { id: doc.id, ...doc.data() } as MissionDoc;
     } catch (err) {
+      if (isStrictDb()) throw err;
       console.warn("[db] Firestore missions.get failed:", String(err).slice(0, 120));
     }
   }
@@ -199,6 +211,7 @@ export async function updateMission(id: string, data: Partial<MissionDoc>): Prom
       await col("missions").doc(id).update(data);
       return;
     } catch (err) {
+      if (isStrictDb()) throw err;
       console.warn("[db] Firestore missions.update failed:", String(err).slice(0, 120));
     }
   }
@@ -219,6 +232,7 @@ export async function listMissions(tenantId: string, limit = 50): Promise<Missio
         )
         .slice(0, limit);
     } catch (err) {
+      if (isStrictDb()) throw err;
       console.warn("[db] Firestore missions.list failed:", String(err).slice(0, 120));
     }
   }
@@ -246,6 +260,7 @@ export async function deleteMission(id: string): Promise<void> {
       await batch.commit();
       return;
     } catch (err) {
+      if (isStrictDb()) throw err;
       console.warn("[db] Firestore missions.delete failed:", String(err).slice(0, 120));
     }
   }

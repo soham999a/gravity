@@ -59,6 +59,11 @@ export async function POST(request: Request) {
   if (!ctx) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
+  const { checkRateLimit, rateLimitKey } = await import("@/lib/rate-limit");
+  const rl = checkRateLimit(`benchmark:${rateLimitKey(request, ctx.uid)}`, 5, 60 * 60_000);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: "benchmark rate limited — 5/hour" }, { status: 429 });
+  }
 
   const body = (await request.json().catch(() => ({}))) as {
     systems?: string[];

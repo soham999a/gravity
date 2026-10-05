@@ -116,7 +116,9 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
         <div className="flex items-center gap-4">
           <div className="hidden items-center gap-2 sm:flex">
             <span className="studio-live-dot" />
-            <span className="studio-meta">Prototype environment</span>
+            <span className="studio-meta">
+              {process.env.NODE_ENV === "production" ? "Production" : "Local preview"}
+            </span>
           </div>
           {userEmail ? (
             <>

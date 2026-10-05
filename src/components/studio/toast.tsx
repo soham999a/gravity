@@ -16,15 +16,19 @@ export interface ToastItem {
 
 interface ToastState {
   toasts: ToastItem[];
-  push: (toast: Omit<ToastItem, "id" | "leaving">) => void;
+  push: (toast: Omit<ToastItem, "id" | "leaving">) => number;
   dismiss: (id: number) => void;
 }
 
 const useToasts = create<ToastState>((set) => ({
   toasts: [],
   push: (toast) => {
-    const id = Date.now() + Math.floor(Math.random() * 1000);
-    set((state) => ({ toasts: [...state.toasts, { ...toast, id, leaving: false }] }));
+    const id = Date.now() + Math.floor(Math.random() * 100000);
+    set((state) => ({
+      // Cap stack at 3 — newest wins, oldest auto-evicted.
+      toasts: [...state.toasts, { ...toast, id, leaving: false }].slice(-3),
+    }));
+    return id;
   },
   dismiss: (id) =>
     set((state) => ({
@@ -32,20 +36,23 @@ const useToasts = create<ToastState>((set) => ({
     })),
 }));
 
-let counter = 0;
-
+/**
+ * Auto-dismiss in ~2.5s (leave animation) + remove at ~2.8s.
+ * Fixed: previous code generated two different ids so dismiss() never matched
+ * and toasts stuck on screen until manually closed.
+ */
 export function toast(
   title: string,
   description?: string,
   variant: ToastVariant = "default",
+  durationMs = 2500,
 ) {
-  counter += 1;
-  const id = Date.now() % 10000 + counter;
-  useToasts.getState().push({ title, description, variant });
-  window.setTimeout(() => useToasts.getState().dismiss(id), 4200);
+  // push() returns the real id — use it for both timers.
+  const id = useToasts.getState().push({ title, description, variant });
+  window.setTimeout(() => useToasts.getState().dismiss(id), durationMs);
   window.setTimeout(() => {
     useToasts.setState((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }));
-  }, 4450);
+  }, durationMs + 300);
 }
 
 const ICONS: Record<ToastVariant, React.ReactNode> = {

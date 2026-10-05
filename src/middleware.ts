@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/signup", "/auth", "/api/health", "/api/debug"];
+const PUBLIC_PATHS = ["/login", "/signup", "/auth", "/api/health", "/api/debug", "/api/auth/session"];
 /* The homepage itself is public: visitors type their prompt first and hit a
    sign-in popup only when they run it (ChatGPT-style flow). APIs stay locked. */
 const PUBLIC_EXACT_PATHS = ["/"];

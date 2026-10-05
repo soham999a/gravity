@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /projects/
+Disallow: /settings/
+
+Sitemap: https://gravity.matrka.net/sitemap.xml
