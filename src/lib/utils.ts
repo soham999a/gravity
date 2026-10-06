@@ -5,6 +5,25 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * Fire-and-forget mission-execute kick with bounded retry: in dev, a Fast
+ * Refresh or cold Turbopack compile can transiently 404 a route that
+ * provably exists; one retry after a beat makes that survivable instead of
+ * leaving a mission stuck in "pending" forever (execute is fire-and-forget
+ * and nothing else ever re-triggers it).
+ */
+export function kickExecute(missionId: string, attempts = 2): void {
+  fetch(`/api/missions/${missionId}/execute`, { method: "POST", credentials: "include" })
+    .then((res) => {
+      if (!res.ok && res.status >= 500 && attempts > 0) {
+        setTimeout(() => kickExecute(missionId, attempts - 1), 1_200);
+      }
+    })
+    .catch(() => {
+      if (attempts > 0) setTimeout(() => kickExecute(missionId, attempts - 1), 1_200);
+    });
+}
+
 export function money(amount: number): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",

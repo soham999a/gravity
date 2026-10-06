@@ -131,10 +131,15 @@ export async function warmupImage(
 /**
  * Verify a generated image against the original user prompt using a
  * vision-capable model (Gemini 2.5 Flash — distinct from the generator).
+ *
+ * `expectOverlayText`: when the plan moved words into an HTML/CSS overlay,
+ * the AI background intentionally contains NO text — the verifier must not
+ * fail it for missing (or ignore garbled) lettering.
  */
 export async function verifyImage(
   imageUrl: string,
   originalPrompt: string,
+  opts?: { expectOverlayText?: boolean },
 ): Promise<ImageVerification> {
   const started = Date.now();
   const model = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
@@ -175,7 +180,10 @@ export async function verifyImage(
           "whether it faithfully matches the user's request. Reply ONLY with JSON: " +
           '{"matches":true|false,"confidence":0.0-1.0,"feedback":"one decisive sentence"} . ' +
           "Judge subject adherence (the requested subject is present), style match if specified, " +
-          "and absence of obvious rendering defects. Minor artistic licence is acceptable.",
+          "and absence of obvious rendering defects. Minor artistic licence is acceptable." +
+          (opts?.expectOverlayText
+            ? " The user's text/typography is added later as a separate overlay layer — the image is EXPECTED to contain no lettering, so do NOT penalize missing text, garbled text, or lettering-like artifacts; reserve clean negative space for the overlay is CORRECT."
+            : ""),
       },
       {
         text: `USER REQUEST: ${originalPrompt.slice(0, 600)}`,

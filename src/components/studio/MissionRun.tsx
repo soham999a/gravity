@@ -349,9 +349,11 @@ export function MissionRun({
   const completedCalls = traceNodes.filter((n) => n.tokens > 0).length;
   let parsedType: string | null = null;
   let parsedData: {
-    images?: { url: string; prompt: string; width: number; height: number }[];
+    images?: { url: string; prompt: string; width: number; height: number; seed?: number }[];
     html?: string;
     promptEnhanced?: boolean;
+    overlay?: { text: string; placement: string; color: string; bgColor?: string } | null;
+    selfHealed?: boolean;
     verification?: {
       verified: boolean;
       matches: boolean | null;
@@ -364,9 +366,11 @@ export function MissionRun({
   try {
     const parsed = JSON.parse(outputText) as {
       type?: string;
-      images?: { url: string; prompt: string; width: number; height: number }[];
+      images?: { url: string; prompt: string; width: number; height: number; seed?: number }[];
       html?: string;
       promptEnhanced?: boolean;
+      overlay?: { text: string; placement: string; color: string; bgColor?: string } | null;
+      selfHealed?: boolean;
       verification?: {
         verified: boolean;
         matches: boolean | null;
@@ -676,9 +680,11 @@ function ResultSurface({
   onCopy: () => void;
   parsedType: string | null;
   parsedData: {
-    images?: { url: string; prompt: string; width: number; height: number }[];
+    images?: { url: string; prompt: string; width: number; height: number; seed?: number }[];
     html?: string;
     promptEnhanced?: boolean;
+    overlay?: { text: string; placement: string; color: string; bgColor?: string } | null;
+    selfHealed?: boolean;
     verification?: {
       verified: boolean;
       matches: boolean | null;
@@ -741,7 +747,7 @@ function ResultSurface({
         </div>
         <div style={{ paddingTop: 28 }}>
           {parsedType === "images" && parsedData?.images ? (
-            <ImageResult images={parsedData.images} />
+            <ImageResult images={parsedData.images} overlay={parsedData.overlay} />
           ) : parsedType === "website" && parsedData?.html ? (
             <WebsiteResult html={parsedData.html} />
           ) : (
@@ -799,7 +805,7 @@ function ResultSurface({
                 ? parsedData.verification.feedback
                 : `Vision verification skipped (${parsedData.verification.reason ?? "unavailable"}) — image delivered as generated.`
               : (feedback ?? "")}
-            {` (${completedCalls} LLM call(s) · ${totalTokensUsed} tokens · $${(run ? run.totalCost : 0).toFixed(2)} spend${parsedType === "images" && parsedData?.promptEnhanced ? " · prompt refined by jury LLM" : ""})`}
+            {` (${completedCalls} LLM call(s) · ${totalTokensUsed} tokens · $${(run ? run.totalCost : 0).toFixed(2)} spend${parsedType === "images" && parsedData?.promptEnhanced ? " · prompt refined by jury LLM" : ""}${parsedType === "images" && parsedData?.selfHealed ? " · self-healed after vision mismatch" : ""})`}
           </p>
         </div>
 
@@ -991,15 +997,75 @@ function GenerateImage({
 
 function ImageResult({
   images,
+  overlay,
 }: {
-  images: { url: string; prompt: string; width: number; height: number }[];
+  images: { url: string; prompt: string; width: number; height: number; seed?: number }[];
+  overlay?: { text: string; placement: string; color: string; bgColor?: string } | null;
 }) {
+  const [refineIdx, setRefineIdx] = React.useState<number | null>(null);
+  const [nudge, setNudge] = React.useState("");
+  const [refining, setRefining] = React.useState(false);
+  const [refineError, setRefineError] = React.useState<string | null>(null);
+  const [variations, setVariations] = React.useState(images);
+
+  // Keep local state in sync if the parent payload changes (new run).
+  React.useEffect(() => {
+    setVariations(images);
+  }, [images]);
+
+  const applyRefine = async (idx: number) => {
+    if (refining || !nudge.trim()) return;
+    const img = variations[idx];
+    if (!img) return;
+    setRefining(true);
+    setRefineError(null);
+    try {
+      const res = await fetch("/api/image/refine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: img.prompt,
+          nudge: nudge.trim(),
+          seed: img.seed,
+          width: img.width,
+          height: img.height,
+        }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        image?: { url: string; prompt: string; width: number; height: number; seed: number };
+      };
+      if (!res.ok || !data.ok || !data.image) {
+        setRefineError(data.error ?? `Refine failed (${res.status})`);
+        return;
+      }
+      setVariations((prev) =>
+        prev.map((im, i) => (i === idx ? { ...im, ...data.image! } : im)),
+      );
+      setNudge("");
+      setRefineIdx(null);
+    } catch {
+      setRefineError("Network error while refining");
+    } finally {
+      setRefining(false);
+    }
+  };
+
   return (
     <div className="studio-image-grid">
-      {images.map((img, i) => (
+      {variations.map((img, i) => (
         <div key={i} className="studio-image-card">
           <a href={img.url} target="_blank" rel="noopener noreferrer">
             <GenerateImage img={img} />
+            {overlay ? (
+              <span
+                className={`studio-poster-overlay studio-poster-overlay-${overlay.placement}`}
+                style={{ color: overlay.color, backgroundColor: overlay.bgColor }}
+              >
+                {overlay.text}
+              </span>
+            ) : null}
           </a>
           <div className="studio-image-overlay">
             <span className="studio-image-label">
@@ -1013,6 +1079,40 @@ function ImageResult({
           >
             Open full size
           </a>
+          <button
+            type="button"
+            className="studio-refine-toggle"
+            onClick={() => {
+              setRefineIdx(refineIdx === i ? null : i);
+              setRefineError(null);
+            }}
+          >
+            ✦ Refine
+          </button>
+          {refineIdx === i ? (
+            <div className="studio-refine-panel">
+              <input
+                className="studio-refine-input"
+                value={nudge}
+                onChange={(e) => setNudge(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void applyRefine(i);
+                }}
+                placeholder="warmer colors, more minimal…"
+                maxLength={200}
+                disabled={refining}
+              />
+              <button
+                type="button"
+                className="studio-refine-apply"
+                onClick={() => void applyRefine(i)}
+                disabled={refining || !nudge.trim()}
+              >
+                {refining ? "Refining…" : "Apply"}
+              </button>
+              {refineError ? <p className="studio-refine-error">{refineError}</p> : null}
+            </div>
+          ) : null}
         </div>
       ))}
     </div>

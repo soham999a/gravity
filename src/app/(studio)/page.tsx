@@ -24,7 +24,7 @@ import { RightSideVisualField } from "@/components/gravity/RightSideVisualField"
 import { useGravityUser } from "@/lib/gravity-user";
 import { useMissionFeed } from "@/lib/gravity-missions";
 import { displayPrompt } from "@/lib/gravity/promptText";
-import { num } from "@/lib/utils";
+import { num, kickExecute } from "@/lib/utils";
 
 const FREE_LIMIT = 250_000;
 
@@ -95,7 +95,7 @@ async function startMission(prompt: string, files?: CsvFile[], forceStrategy?: s
   });
   if (!res.ok) throw new Error(`Status ${res.status}`);
   const json = (await res.json()) as { missionId: string };
-  fetch(`/api/missions/${json.missionId}/execute`, { method: "POST", credentials: "include" }).catch(() => {});
+  kickExecute(json.missionId);
   return json.missionId;
 }
 
@@ -222,7 +222,7 @@ function HomeContent() {
 
   const handleRetry = async () => {
     if (!missionId) return;
-    await fetch(`/api/missions/${missionId}/execute`, { method: "POST", credentials: "include" }).catch(() => {});
+    kickExecute(missionId);
   };
 
   // User Control simulation: re-run the exact original prompt (data files

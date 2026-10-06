@@ -22,14 +22,16 @@ export type Difficulty = "EASY" | "MEDIUM" | "HARD";
 export type VerificationStatus = "PASS" | "FAIL" | "INSUFFICIENT" | "SKIPPED";
 export type RunMode = "ADAPTIVE" | "STATIC";
 
-/** Spec §Cost Model: C_total = C_compute + C_intel + C_storage + C_other */
+/** Spec §Cost Model: C_total = C_compute + C_intel + C_storage + C_other.
+ *  Any component the system under test cannot expose stays null (honest None,
+ *  rendered as "—") — never 0, which would fake symmetry between systems. */
 export interface CostDecomposition {
-  modelCost: number;
-  computeCost: number;
-  toolCost: number;
-  verificationCost: number;
-  orchestrationCost: number;
-  totalCost: number;
+  modelCost: number | null;
+  computeCost: number | null;
+  toolCost: number | null;
+  verificationCost: number | null;
+  orchestrationCost: number | null;
+  totalCost: number | null;
 }
 
 export interface BenchmarkRecord {
@@ -81,6 +83,11 @@ export interface BenchmarkRecord {
   // ── Economics ────────────────────────────
   cost: CostDecomposition;
 
+  /** Raw output + evaluation evidence, per the adapter contract:
+   *  raw_text for the evaluator, error on failed runs, evidence after merge.
+   *  A missing row is worse than a failed row — errors are records too. */
+  metadata: Record<string, unknown> | null;
+
   // ── GRAVITY-specific ─────────────────────
   intelligenceLevel: number | null;
   route: string[] | null;
@@ -130,21 +137,19 @@ export interface BenchmarkRunManifest {
 
 export const TASK_VERSION = "workload-classes-v1";
 
-/** Deterministic config fingerprint per the spec's "Configuration to Freeze". */
-export function configHash(parts: {
+/** Deterministic config fingerprint per the spec's "Configuration to Freeze"
+ *  — SHA-256 over system|model|temperature|maxTokens|prompt, so any config
+ *  change between runs is detectable from the record itself. */
+export async function configHash(parts: {
   system: BenchmarkSystem;
   model: string | null;
   temperature: number;
   maxTokens: number;
   prompt: string;
-}): string {
-  const raw = `${parts.system}|${parts.model ?? "none"}|${parts.temperature}|${parts.maxTokens}|${parts.prompt.length}`;
-  let hash = 2166136261;
-  for (let i = 0; i < raw.length; i += 1) {
-    hash ^= raw.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
+}): Promise<string> {
+  const raw = [parts.system, parts.model ?? "none", parts.temperature, parts.maxTokens, parts.prompt].join("|");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
+  return `sha256:${[...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
 export function percentile(values: number[], p: number): number | null {
@@ -172,7 +177,8 @@ export function seededRandom(seed: number): () => number {
 export function aggregateRecords(records: BenchmarkRecord[]): BenchmarkAggregate {
   const successful = records.filter((record) => record.success);
   const latencies = records.map((record) => record.latencyMs);
-  const totalCost = records.reduce((sum, record) => sum + record.cost.totalCost, 0);
+  // null cost components (honest None) contribute nothing rather than faking 0.
+  const totalCost = records.reduce((sum, record) => sum + (record.cost.totalCost ?? 0), 0);
   const tokens = records.map(
     (record) => (record.inputTokens ?? 0) + (record.outputTokens ?? 0),
   );

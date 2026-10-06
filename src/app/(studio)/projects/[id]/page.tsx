@@ -8,6 +8,7 @@ import { RightSideVisualField } from "@/components/gravity/RightSideVisualField"
 import { useGravityUser } from "@/lib/gravity-user";
 import { toast } from "@/components/studio/toast";
 import { displayPrompt } from "@/lib/gravity/promptText";
+import { kickExecute } from "@/lib/utils";
 import { ArrowLeft, Trash2 } from "lucide-react";
 import Link from "next/link";
 
@@ -50,12 +51,12 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     });
     if (!createRes.ok) throw new Error("Failed to start follow-up");
     const { missionId } = (await createRes.json()) as { missionId: string };
-    fetch(`/api/missions/${missionId}/execute`, { method: "POST", credentials: "include" }).catch(() => {});
+    kickExecute(missionId);
     router.push(`/projects/${missionId}`);
   };
 
   const handleRetry = async () => {
-    await fetch(`/api/missions/${id}/execute`, { method: "POST", credentials: "include" }).catch(() => {});
+    kickExecute(id);
     // Force a remount so MissionRun re-fetches
     router.refresh();
   };
@@ -79,7 +80,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     });
     if (!createRes.ok) throw new Error("Failed to start simulation");
     const { missionId } = (await createRes.json()) as { missionId: string };
-    fetch(`/api/missions/${missionId}/execute`, { method: "POST", credentials: "include" }).catch(() => {});
+    kickExecute(missionId);
     router.push(`/projects/${missionId}`);
   };
 

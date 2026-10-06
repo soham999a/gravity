@@ -30,7 +30,9 @@ import { analyzeDataset, formatReportForLLM } from "@/lib/gravity/stats";
 import { stripDataMarkers } from "@/lib/gravity/promptText";
 import {
   generateImageVariations,
-  enhancePromptWithLLM,
+  generateImageURL,
+  planImagePrompts,
+  buildRepairPrompt,
 } from "@/lib/gravity/imagegen";
 import { generateWebsite } from "@/lib/gravity/sitegen";
 import type { StrategyKind } from "@/lib/gravity/types";
@@ -782,22 +784,14 @@ export async function executeMission(missionId: string): Promise<void> {
         .replace(/\[DATA:csv[^\]]*\][\s\S]*?\[\/DATA\]\n*/g, "")
         .trim();
 
-      // ── FREE QUALITY LEVER 1: LLM prompt-enhancement ───────────────
-      // Diffusion models reward rich, structured prompts. We already have
-      // free Gemini 2.5 Flash / Groq keys configured — use one to rewrite
-      // the user's idea into a proper diffusion prompt. Falls back to the
-      // raw prompt on any failure.
-      let imagePrompt = cleanPrompt;
-      let promptEnhanced = false;
-      if (isLLMConfigured()) {
-        const enhanced = await enhancePromptWithLLM(cleanPrompt, 12_000);
-        if (enhanced) {
-          imagePrompt = enhanced;
-          promptEnhanced = true;
-        }
-      }
+      // ── STEP 1 · PLAN (free LLM, before a single pixel is rendered) ───
+      // Rewrite the idea into a rich diffusion prompt and decide where words
+      // belong: diffusion models garble rendered text, so 1-4 word titles go
+      // to an HTML/CSS typographic overlay and the render is told to leave
+      // clean negative space for them. Falls back to heuristic tags.
+      const plan = await planImagePrompts(cleanPrompt, { budgetMs: 12_000 });
 
-      const images = generateImageVariations(imagePrompt, 2);
+      const images = generateImageVariations(plan.imagePrompt, 2);
 
       // Pollinations renders lazily on first request and burst-throttles
       // fresh seeds with transient 402s — a cold URL shows as a broken/
@@ -813,48 +807,32 @@ export async function executeMission(missionId: string): Promise<void> {
         void warmupImage(images[1].url, { notAfter: warmNotAfter }).catch(() => {});
       }
 
+      let imgItems = images.map((img) => ({
+        url: img.url,
+        prompt: img.prompt,
+        width: img.width,
+        height: img.height,
+        seed: img.seed,
+      }));
+
       await executeNode({
         runId: run.id,
         name: "Image Generation",
         type: "image_generation",
         stage: "L1 · Generate",
-        purpose: `Generate ${images.length} image(s) from: "${cleanPrompt.slice(0, 80)}"${promptEnhanced ? " · prompt enhanced by jury LLM" : ""}`,
-        prompt: promptEnhanced ? imagePrompt.slice(0, 500) : cleanPrompt.slice(0, 500),
-
+        purpose: `Generate ${imgItems.length} image(s) from: "${cleanPrompt.slice(0, 80)}"${plan.enhanced ? " · planned by jury LLM" : ""}`,
+        prompt: plan.imagePrompt.slice(0, 500),
         outputOverride: JSON.stringify({
           type: "images",
-          images: images.map((img) => ({
-            url: img.url,
-            prompt: img.prompt,
-            width: img.width,
-            height: img.height,
-          })),
+          images: imgItems,
           mainPrompt: cleanPrompt,
-          promptEnhanced,
+          promptEnhanced: plan.enhanced,
+          overlay: plan.overlay,
         }),
       });
 
-      finalOutput = JSON.stringify({
-        type: "images",
-        images: images.map((img) => ({
-          url: img.url,
-          prompt: img.prompt,
-          width: img.width,
-          height: img.height,
-        })),
-        mainPrompt: cleanPrompt,
-        promptEnhanced,
-      });
-
-      // ── IMAGE VERIFICATION (senior's 4th box) ──────────────────────────
-      // A separate vision model LOOKS at the generated image and judges
-      // whether it matches the user's request. The generator never grades
-      // its own homework. Runs after the output payload is built so the
-      // mission still completes even if verification is skipped.
-      const imagesPayload = JSON.parse(finalOutput) as {
-        images: { url: string }[];
-      };
       let verification: import("./verifyImage").ImageVerification | null = null;
+      let selfHealed = false;
       // Keep ~15s of headroom inside the run deadline — a verify that can't
       // finish would just be aborted anyway. This matches the node deadline
       // checks elsewhere in the pipeline.
@@ -871,11 +849,77 @@ export async function executeMission(missionId: string): Promise<void> {
       } else {
         try {
           verification = await verifyImage(
-            imagesPayload.images[0]?.url ?? "",
+            imgItems[0]?.url ?? "",
             cleanPrompt,
+            { expectOverlayText: Boolean(plan.overlay) },
           );
         } catch (err) {
           console.warn("[pipeline] image verification error:", String(err).slice(0, 120));
+        }
+
+        // ── SELF-HEAL: regenerate once with the defect folded in ──────
+        // The vision jury said MISMATCH with usable feedback. Fold that
+        // feedback into the render prompt, regenerate variation #1, and
+        // re-verify. Only replaces the deliverable if the recheck passes —
+        // otherwise the originals ship with the honest MISMATCH verdict.
+        const mismatch =
+          verification?.verified === true &&
+          verification.matches === false &&
+          Boolean(verification.feedback);
+        if (mismatch && Date.now() < deadlineAt - 25_000) {
+          try {
+            const repairPrompt = buildRepairPrompt(
+              plan.imagePrompt,
+              verification!.feedback,
+            );
+            const retry = generateImageURL(repairPrompt, {
+              seed: (images[0]?.seed ?? 0) + 1,
+              width: images[0]?.width,
+              height: images[0]?.height,
+            });
+
+            await executeNode({
+              runId: run.id,
+              name: "Self-Heal Regeneration",
+              type: "image_generation",
+              stage: "L1 · Generate",
+              purpose: `Vision jury reported MISMATCH — regenerating once with the defect folded in: "${verification!.feedback.slice(0, 140)}"`,
+              prompt: repairPrompt.slice(0, 500),
+              outputOverride: JSON.stringify({
+                type: "images",
+                images: [
+                  { url: retry.url, prompt: retry.prompt, width: retry.width, height: retry.height },
+                ],
+              }),
+            });
+
+            await warmupImage(retry.url, { notAfter: deadlineAt - 15_000 });
+            const recheck = await verifyImage(retry.url, cleanPrompt, {
+              expectOverlayText: Boolean(plan.overlay),
+            });
+            await executeNode({
+              runId: run.id,
+              name: "Self-Heal Verification",
+              type: "image_generation",
+              stage: "L2 · Verify",
+              purpose: recheck.verified
+                ? `Vision model re-judged the regenerated image: ${recheck.matches ? "MATCH" : "MISMATCH"} — ${recheck.feedback}`
+                : `Re-verification skipped (${recheck.reason ?? "unknown"})`,
+              prompt: repairPrompt.slice(0, 500),
+              outputOverride: JSON.stringify(recheck),
+            });
+
+            if (recheck.verified && recheck.matches !== false) {
+              imgItems = [
+                { url: retry.url, prompt: retry.prompt, width: retry.width, height: retry.height, seed: retry.seed },
+                ...imgItems.slice(1),
+              ];
+              verification = recheck;
+              selfHealed = true;
+            }
+          } catch (err) {
+            console.warn("[pipeline] self-heal error:", String(err).slice(0, 120));
+          }
         }
       }
 
@@ -893,7 +937,12 @@ export async function executeMission(missionId: string): Promise<void> {
 
       // Attach the verdict to the output payload the UI renders.
       finalOutput = JSON.stringify({
-        ...imagesPayload,
+        type: "images",
+        images: imgItems,
+        mainPrompt: cleanPrompt,
+        promptEnhanced: plan.enhanced,
+        overlay: plan.overlay,
+        selfHealed,
         verification: verification
           ? {
               verified: verification.verified,
@@ -911,7 +960,7 @@ export async function executeMission(missionId: string): Promise<void> {
         name: "Image Result",
         type: "image_generation",
         stage: "L2 · Output",
-        purpose: `${images.length} image(s) ready for display`,
+        purpose: `${imgItems.length} image(s) ready for display${selfHealed ? " (self-healed)" : ""}`,
         prompt: "Image output ready",
         outputOverride: finalOutput,
       });

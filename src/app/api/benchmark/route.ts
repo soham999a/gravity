@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { verifyAuthToken } from "@/lib/api-auth";
-import { runBenchmark, recordsToCsv, GROUND_TRUTH, type RunnerProgress } from "@/lib/gravity/benchmarkRunner";
+import { runBenchmark, recordsToCsv, type RunnerProgress } from "@/lib/gravity/benchmarkRunner";
+import { GROUND_TRUTH } from "@/lib/gravity/benchmarkEval";
+import { PINNED_CONFIG, JEV_WIRED } from "@/lib/gravity/benchmarkAdapters";
 import {
   getLatestBenchmark,
   saveBenchmarkRun,
@@ -44,6 +46,14 @@ export async function GET(request: Request) {
       difficulty: truth.difficulty,
       successCriterion: truth.successCriterion,
     })),
+    pinnedConfig: {
+      claudeModel: PINNED_CONFIG.CLAUDE_MODEL,
+      openaiModel: PINNED_CONFIG.OPENAI_MODEL,
+      openrouterModel: PINNED_CONFIG.OPENROUTER_MODEL,
+      temperature: PINNED_CONFIG.TEMPERATURE,
+      maxTokens: PINNED_CONFIG.MAX_TOKENS,
+    },
+    jevWired: JEV_WIRED,
     openrouterConfigured: Boolean(process.env.OPENROUTER_API_KEY),
     deepseekConfigured: Boolean(process.env.DEEPSEEK_API_KEY),
   });
@@ -82,16 +92,8 @@ export async function POST(request: Request) {
     );
   }
 
-  // JEV needs its own engine — not runnable through this harness yet.
-  if (systems.includes("JEV")) {
-    return NextResponse.json(
-      {
-        error:
-          "JEV is declared in the schema but not wired into this runner yet — run GRAVITY, GRAVITY-STATIC, GRAVITY-OPENROUTER, CLAUDE, OPENAI.",
-      },
-      { status: 400 },
-    );
-  }
+  // JEV stays selectable: the adapter records the honest UNSUPPORTED error
+  // (spec: a missing row is worse than a failed row) instead of 400-ing.
 
   const classes = (body.classes ?? ["A", "B", "C", "D", "E"]).filter((entry) =>
     ["A", "B", "C", "D", "E"].includes(entry),

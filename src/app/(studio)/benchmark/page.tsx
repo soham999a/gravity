@@ -3,14 +3,15 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-type SystemId = "GRAVITY" | "GRAVITY-STATIC" | "GRAVITY-OPENROUTER" | "CLAUDE" | "OPENAI";
+type SystemId = "GRAVITY" | "GRAVITY-STATIC" | "GRAVITY-OPENROUTER" | "JEV" | "CLAUDE" | "OPENAI";
 
 const SYSTEMS: { id: SystemId; label: string; note: string }[] = [
   { id: "GRAVITY", label: "GRAVITY", note: "adaptive kernel · full pipeline" },
   { id: "GRAVITY-STATIC", label: "GRAVITY-Static", note: "kernel pinned OFF · isolates the architecture" },
   { id: "GRAVITY-OPENROUTER", label: "GRAVITY-OpenRouter", note: "raw pinned OpenRouter model (free tier) · no kernel" },
-  { id: "CLAUDE", label: "Claude", note: "anthropic/claude-sonnet-5.5 · pinned, raw" },
-  { id: "OPENAI", label: "OpenAI", note: "openai/gpt-oss-120b · pinned, raw (needs credit)" },
+  { id: "JEV", label: "Jev", note: "decision model · declared in graph, adapter records UNSUPPORTED until wired" },
+  { id: "CLAUDE", label: "Claude", note: "claude-sonnet-5.5 · provider-pinned, raw" },
+  { id: "OPENAI", label: "OpenAI", note: "gpt-oss-120b · provider-pinned, raw (needs credit)" },
 ];
 
 interface Aggregate {
@@ -35,7 +36,7 @@ interface RecordRow {
   outputTokens: number | null;
   latencyMs: number;
   intelligenceLevel: number | null;
-  cost: { totalCost: number };
+  cost: { totalCost: number | null };
   benchmarkRunId: string;
 }
 
@@ -47,6 +48,19 @@ interface Manifest {
   recordCount: number;
   startedAt: string;
   persisted?: boolean;
+}
+
+interface SkippedSystem {
+  system: string;
+  reason: string;
+}
+
+interface PinnedConfig {
+  claudeModel: string;
+  openaiModel: string;
+  openrouterModel: string;
+  temperature: number;
+  maxTokens: number;
 }
 
 interface GroundTruthRow {
@@ -71,6 +85,9 @@ export default function BenchmarkPage() {
   const [groundTruth, setGroundTruth] = React.useState<GroundTruthRow[]>([]);
   const [openrouterConfigured, setOpenrouterConfigured] = React.useState(false);
   const [deepseekConfigured, setDeepseekConfigured] = React.useState(false);
+  const [pinnedConfig, setPinnedConfig] = React.useState<PinnedConfig | null>(null);
+  const [jevWired, setJevWired] = React.useState(false);
+  const [skippedSystems, setSkippedSystems] = React.useState<SkippedSystem[]>([]);
   const [phase, setPhase] = React.useState<"idle" | "running" | "error">("idle");
   const [error, setError] = React.useState<string | null>(null);
   const [showRecords, setShowRecords] = React.useState(false);
@@ -86,6 +103,8 @@ export default function BenchmarkPage() {
       setGroundTruth(data.groundTruth ?? []);
       setOpenrouterConfigured(Boolean(data.openrouterConfigured));
       setDeepseekConfigured(Boolean(data.deepseekConfigured));
+      setPinnedConfig(data.pinnedConfig ?? null);
+      setJevWired(Boolean(data.jevWired));
     } catch {
       /* first-load race; the run will refresh */
     }
@@ -122,6 +141,7 @@ export default function BenchmarkPage() {
       setManifest({ ...data.manifest, persisted: data.persisted });
       setAggregates(data.aggregates ?? []);
       setRecords(data.records ?? []);
+      setSkippedSystems(data.skippedSystems ?? []);
     } catch (err) {
       setPhase("error");
       setError(err instanceof Error ? err.message : "benchmark run failed");
@@ -156,6 +176,11 @@ export default function BenchmarkPage() {
           <span className="meta">
             deepseek {deepseekConfigured ? "· configured" : "· not set"}
           </span>
+          {pinnedConfig ? (
+            <span className="meta">
+              pinned {pinnedConfig.claudeModel} · {pinnedConfig.openaiModel} · temp {pinnedConfig.temperature} · {pinnedConfig.maxTokens} tok
+            </span>
+          ) : null}
         </div>
       </header>
 
@@ -229,6 +254,17 @@ export default function BenchmarkPage() {
       {error ? (
         <p className="danger-text text-sm">Run failed: {error}</p>
       ) : null}
+
+      {skippedSystems.length > 0 ? (
+        <section className="rounded-lg border border-border bg-surface p-4">
+          <p className="meta text-warning-text">HONESTLY SKIPPED (adapter recorded, not fabricated)</p>
+          {skippedSystems.map((skip) => (
+            <p key={skip.system} className="mt-1 text-sm text-ivory-faint">
+              <span className="text-gold">{skip.system}</span> — {skip.reason}
+            </p>
+          ))}
+        </section>
+        ) : null}
 
       {/* ── Manifest ── */}
       {manifest ? (
@@ -345,7 +381,9 @@ export default function BenchmarkPage() {
                       <td className="meta px-3 py-2">
                         {record.intelligenceLevel === null ? "—" : `L${record.intelligenceLevel}`}
                       </td>
-                      <td className="meta px-3 py-2">${record.cost.totalCost.toFixed(4)}</td>
+                      <td className="meta px-3 py-2">
+                        {record.cost.totalCost === null ? "—" : `$${record.cost.totalCost.toFixed(4)}`}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
