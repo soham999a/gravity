@@ -1,14 +1,12 @@
 {
   "functions": {
-    "src/app/api/**": {
+    "src/app/api/**/*": {
       "maxDuration": 60
     }
   },
   "crons": [
     {
       "path": "/api/cron/stale-missions",
-      // Hobby plan allows 1/day crons only — "*/10 * * * *" fails deploy
-      // validation. Restore the 10-min schedule after upgrading to Pro.
       "schedule": "0 2 * * *"
     }
   ]
