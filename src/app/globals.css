@@ -4924,3 +4924,72 @@
   width: 100%;
 }
 
+/* ===========================================================================
+   USER INPUT SEGMENT — collapsible original prompt in the result header
+   =========================================================================== */
+.result-input-segment {
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-void) 60%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.result-input-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  color: var(--color-muted-foreground);
+}
+.result-input-toggle:hover {
+  color: var(--color-foreground);
+}
+.result-input-label {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--color-gold);
+}
+.result-input-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+.result-input-chevron {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s ease;
+}
+.result-input-chevron-open {
+  transform: rotate(180deg);
+}
+.result-input-body {
+  margin: 0;
+  padding: 4px 12px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-muted-foreground);
+}
+
+/* Prompt-refined transparency note on image results */
+.studio-enhanced-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-gold, #d4a437);
+  opacity: 0.85;
+}
+
+

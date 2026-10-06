@@ -28,7 +28,10 @@ import {
 } from "@/lib/gravity/kernel";
 import { analyzeDataset, formatReportForLLM } from "@/lib/gravity/stats";
 import { stripDataMarkers } from "@/lib/gravity/promptText";
-import { generateImageVariations } from "@/lib/gravity/imagegen";
+import {
+  generateImageVariations,
+  enhancePromptWithLLM,
+} from "@/lib/gravity/imagegen";
 import { generateWebsite } from "@/lib/gravity/sitegen";
 import type { StrategyKind } from "@/lib/gravity/types";
 
@@ -603,6 +606,16 @@ function statisticalArtifact(prompt: string): string {
 // Evaluation — LLM-as-judge grading with heuristic fallback.
 // ---------------------------------------------------------------------------
 
+/** Shape of the verification payload the image path embeds in its output. */
+interface MediaVerification {
+  verified: boolean;
+  matches: boolean | null;
+  confidence: number | null;
+  feedback: string;
+  model: string | null;
+  reason?: string | null;
+}
+
 interface JudgeVerdict {
   accuracy: number;
   depth: number;
@@ -769,13 +782,35 @@ export async function executeMission(missionId: string): Promise<void> {
         .replace(/\[DATA:csv[^\]]*\][\s\S]*?\[\/DATA\]\n*/g, "")
         .trim();
 
-      const images = generateImageVariations(cleanPrompt, 2);
+      // ── FREE QUALITY LEVER 1: LLM prompt-enhancement ───────────────
+      // Diffusion models reward rich, structured prompts. We already have
+      // free Gemini 2.5 Flash / Groq keys configured — use one to rewrite
+      // the user's idea into a proper diffusion prompt. Falls back to the
+      // raw prompt on any failure.
+      let imagePrompt = cleanPrompt;
+      let promptEnhanced = false;
+      if (isLLMConfigured()) {
+        const enhanced = await enhancePromptWithLLM(cleanPrompt, 12_000);
+        if (enhanced) {
+          imagePrompt = enhanced;
+          promptEnhanced = true;
+        }
+      }
 
-      // Pollinations renders lazily on first request — variation #2 (a fresh
-      // seed) often isn't ready when the browser asks for it and shows as a
-      // broken image. Warm it up server-side now so it's cached and ready.
+      const images = generateImageVariations(imagePrompt, 2);
+
+      // Pollinations renders lazily on first request and burst-throttles
+      // fresh seeds with transient 402s — a cold URL shows as a broken/
+      // still-rendering image or an image_fetch_failed verification skip.
+      // Warm BOTH variations server-side now. The main one is awaited so
+      // verification receives real bytes; the second is fire-and-forget.
+      // Both are bounded by the run deadline (minus verify headroom).
+      const warmNotAfter = deadlineAt - 15_000;
+      if (images[0]) {
+        await warmupImage(images[0].url, { notAfter: warmNotAfter });
+      }
       if (images[1]) {
-        void warmupImage(images[1].url).catch(() => {});
+        void warmupImage(images[1].url, { notAfter: warmNotAfter }).catch(() => {});
       }
 
       await executeNode({
@@ -783,8 +818,9 @@ export async function executeMission(missionId: string): Promise<void> {
         name: "Image Generation",
         type: "image_generation",
         stage: "L1 · Generate",
-        purpose: `Generate ${images.length} image(s) from: "${cleanPrompt.slice(0, 80)}"`,
-        prompt: cleanPrompt.slice(0, 500),
+        purpose: `Generate ${images.length} image(s) from: "${cleanPrompt.slice(0, 80)}"${promptEnhanced ? " · prompt enhanced by jury LLM" : ""}`,
+        prompt: promptEnhanced ? imagePrompt.slice(0, 500) : cleanPrompt.slice(0, 500),
+
         outputOverride: JSON.stringify({
           type: "images",
           images: images.map((img) => ({
@@ -794,6 +830,7 @@ export async function executeMission(missionId: string): Promise<void> {
             height: img.height,
           })),
           mainPrompt: cleanPrompt,
+          promptEnhanced,
         }),
       });
 
@@ -806,6 +843,7 @@ export async function executeMission(missionId: string): Promise<void> {
           height: img.height,
         })),
         mainPrompt: cleanPrompt,
+        promptEnhanced,
       });
 
       // ── IMAGE VERIFICATION (senior's 4th box) ──────────────────────────
@@ -817,13 +855,28 @@ export async function executeMission(missionId: string): Promise<void> {
         images: { url: string }[];
       };
       let verification: import("./verifyImage").ImageVerification | null = null;
-      try {
-        verification = await verifyImage(
-          imagesPayload.images[0]?.url ?? "",
-          cleanPrompt,
-        );
-      } catch (err) {
-        console.warn("[pipeline] image verification error:", String(err).slice(0, 120));
+      // Keep ~15s of headroom inside the run deadline — a verify that can't
+      // finish would just be aborted anyway. This matches the node deadline
+      // checks elsewhere in the pipeline.
+      if (Date.now() > deadlineAt - 15_000) {
+        verification = {
+          verified: false,
+          matches: null,
+          confidence: null,
+          feedback: "Not enough time left in this mission's window — verification skipped.",
+          model: null,
+          reason: "deadline",
+          latencyMs: 0,
+        };
+      } else {
+        try {
+          verification = await verifyImage(
+            imagesPayload.images[0]?.url ?? "",
+            cleanPrompt,
+          );
+        } catch (err) {
+          console.warn("[pipeline] image verification error:", String(err).slice(0, 120));
+        }
       }
 
       await executeNode({
@@ -1083,45 +1136,115 @@ export async function executeMission(missionId: string): Promise<void> {
     await updateMission(missionId, { status: "evaluating" });
     const profileRow = await getProblemProfile(missionId);
 
-    const { judge, usedLlm } = await judgeOutput(mission.prompt, finalOutput);
+    // Media outputs (image/website) are structured payloads, not prose. The
+    // text jury would grade the JSON wrapper and fail it for "not answering
+    // as text" — exactly the bug seen live: a delivered image graded 10%
+    // with "did not provide a JSON response". The image path is graded by
+    // the DEDICATED vision verifier instead; the text jury never sees media.
+    let mediaKind: "images" | "website" | null = null;
+    let mediaVerification: MediaVerification | null = null;
+    try {
+      const parsedMedia = JSON.parse(finalOutput) as {
+        type?: string;
+        verification?: MediaVerification | null;
+      };
+      if (parsedMedia?.type === "images" || parsedMedia?.type === "website") {
+        mediaKind = parsedMedia.type;
+        mediaVerification = parsedMedia.verification ?? null;
+      }
+    } catch {
+      /* plain text output */
+    }
+
     const wordCount = finalOutput.split(/\s+/).length;
 
     let qualityScore: number;
     let dimensionScores: { name: string; score: number; delta?: number }[];
     let feedback: string;
+    let outputVerdict: "pass" | "review" | "fail";
 
-    if (judge) {
-      const efficiency = totalTokens > 0 ? Math.max(0.5, 1 - totalTokens / 8000) : 1;
-      qualityScore =
-        judge.accuracy * 0.35 +
-        judge.depth * 0.2 +
-        judge.clarity * 0.15 +
-        judge.actionability * 0.2 +
-        efficiency * 0.1;
+    if (mediaKind === "images") {
+      // Grade images ONLY on the vision verifier's measured verdict.
+      if (mediaVerification?.verified && mediaVerification.matches === true) {
+        qualityScore = Math.max(0.75, mediaVerification.confidence ?? 0.85);
+        dimensionScores = [
+          { name: "Prompt match", score: qualityScore },
+          { name: "Verification", score: 1 },
+          { name: "Efficiency", score: 1 },
+        ];
+        feedback = `${mediaVerification.feedback} (vision verifier: ${mediaVerification.model} · ${llmCalls} LLM calls · ${totalTokens} tokens)`;
+        outputVerdict = "pass";
+      } else if (mediaVerification?.verified && mediaVerification.matches === false) {
+        qualityScore = Math.min(0.45, Math.max(0.1, (mediaVerification.confidence ?? 0.5) * 0.5));
+        dimensionScores = [
+          { name: "Prompt match", score: qualityScore },
+          { name: "Verification", score: 0 },
+          { name: "Efficiency", score: 1 },
+        ];
+        feedback = `${mediaVerification.feedback} (vision verifier flagged a mismatch — try refining the prompt)`;
+        outputVerdict = "review";
+      } else {
+        // Verification could not run (no vision key, fetch failure, etc.).
+        // The image itself was DELIVERED — never grade that as a failure.
+        qualityScore = 0.8;
+        dimensionScores = [
+          { name: "Delivery", score: 1 },
+          { name: "Verification", score: 0 },
+          { name: "Efficiency", score: 1 },
+        ];
+        feedback = `${llmCalls} LLM call(s), ${totalTokens} tokens. Image delivered — vision verification skipped (${mediaVerification?.reason ?? "unavailable"}).`;
+        outputVerdict = "review";
+      }
+    } else if (mediaKind === "website") {
+      // Deterministic structural check on the generated site.
+      const parsedSite = JSON.parse(finalOutput) as { html?: string };
+      const html = parsedSite.html ?? "";
+      const structural = html.length >= 500 && /<body/i.test(html) && /<\/html>/i.test(html);
+      qualityScore = structural ? 0.85 : 0.3;
       dimensionScores = [
-        { name: "Accuracy", score: judge.accuracy },
-        { name: "Depth", score: judge.depth },
-        { name: "Clarity", score: judge.clarity },
-        { name: "Actionability", score: judge.actionability },
-        { name: "Efficiency", score: efficiency },
+        { name: "Structure", score: structural ? 1 : 0.2 },
+        { name: "Completeness", score: Math.min(1, html.length / 3000) },
+        { name: "Efficiency", score: 1 },
       ];
-      feedback = `${judge.feedback} (${llmCalls} LLM calls · ${totalTokens} tokens · $0.00 spend${usedLlm ? " · graded by model jury" : ""})`;
+      feedback = `${llmCalls} LLM call(s), ${totalTokens} tokens. Site ${html.length.toLocaleString()} chars — structural check ${structural ? "passed" : "incomplete"}.`;
+      outputVerdict = structural ? "pass" : "review";
     } else {
-      qualityScore = Math.min(0.95, 0.5 + Math.min(wordCount / 400, 0.35) + (llmCalls > 0 ? 0.1 : 0));
-      dimensionScores = [
-        { name: "Structure", score: /##|•|- |\d\./.test(finalOutput) ? 0.9 : 0.6 },
-        { name: "Depth", score: Math.min(wordCount / 300, 1) },
-        { name: "Efficiency", score: totalTokens > 0 ? Math.max(0.5, 1 - totalTokens / 8000) : 1 },
-        { name: "Cost efficiency", score: 1 },
-      ];
-      feedback = `${llmCalls} LLM call(s), ${totalTokens} tokens, $0.00 spend. Heuristic evaluation (judge unavailable).`;
+      const { judge, usedLlm } = await judgeOutput(mission.prompt, finalOutput);
+      if (judge) {
+        const efficiency = totalTokens > 0 ? Math.max(0.5, 1 - totalTokens / 8000) : 1;
+        qualityScore =
+          judge.accuracy * 0.35 +
+          judge.depth * 0.2 +
+          judge.clarity * 0.15 +
+          judge.actionability * 0.2 +
+          efficiency * 0.1;
+        dimensionScores = [
+          { name: "Accuracy", score: judge.accuracy },
+          { name: "Depth", score: judge.depth },
+          { name: "Clarity", score: judge.clarity },
+          { name: "Actionability", score: judge.actionability },
+          { name: "Efficiency", score: efficiency },
+        ];
+        feedback = `${judge.feedback} (${llmCalls} LLM calls · ${totalTokens} tokens · $0.00 spend${usedLlm ? " · graded by model jury" : ""})`;
+        outputVerdict = judge.verdict;
+      } else {
+        qualityScore = Math.min(0.95, 0.5 + Math.min(wordCount / 400, 0.35) + (llmCalls > 0 ? 0.1 : 0));
+        dimensionScores = [
+          { name: "Structure", score: /##|•|- |\d\./.test(finalOutput) ? 0.9 : 0.6 },
+          { name: "Depth", score: Math.min(wordCount / 300, 1) },
+          { name: "Efficiency", score: totalTokens > 0 ? Math.max(0.5, 1 - totalTokens / 8000) : 1 },
+          { name: "Cost efficiency", score: 1 },
+        ];
+        feedback = `${llmCalls} LLM call(s), ${totalTokens} tokens, $0.00 spend. Heuristic evaluation (judge unavailable).`;
+        outputVerdict = qualityScore >= 0.7 ? "pass" : "review";
+      }
     }
 
     await createEvaluation({
       missionId,
       dimensions: dimensionScores,
       qualityScore: Number(qualityScore.toFixed(2)),
-      outputVerdict: judge?.verdict ?? (qualityScore >= 0.7 ? "pass" : "review"),
+      outputVerdict,
       decisionVerdict: "optimal",
       feedback: feedback.slice(0, 1000),
     });

@@ -351,6 +351,7 @@ export function MissionRun({
   let parsedData: {
     images?: { url: string; prompt: string; width: number; height: number }[];
     html?: string;
+    promptEnhanced?: boolean;
     verification?: {
       verified: boolean;
       matches: boolean | null;
@@ -365,6 +366,7 @@ export function MissionRun({
       type?: string;
       images?: { url: string; prompt: string; width: number; height: number }[];
       html?: string;
+      promptEnhanced?: boolean;
       verification?: {
         verified: boolean;
         matches: boolean | null;
@@ -405,7 +407,13 @@ export function MissionRun({
     dimensions.length > 0
       ? dimensions.reduce((a, d) => a + d.score, 0) / dimensions.length
       : null;
-  // Efficiency: qualityScore from the jury verdict (0..1).
+  // Efficiency: qualityScore from the jury verdict (0..1). Media outputs are
+  // graded by their verifier, NOT the text jury — compute path efficiency
+  // directly (image gen is ~free: near-zero tokens → high efficiency).
+  const mediaEfficiency =
+    parsedType === "images" || parsedType === "website"
+      ? Math.max(0.5, 1 - totalTokensUsed / 8000)
+      : null;
   const overallQualityScore = evaluation?.qualityScore ?? null;
   const exportMd = buildExportMarkdown({
     title: titleFromPrompt(mission.prompt),
@@ -439,7 +447,7 @@ export function MissionRun({
                     ? "Assembling the right intelligence."
                     : "Your result is ready."}
             </h2>
-            <p className="studio-muted mt-3 max-w-xl">{displayPrompt(mission.prompt)}</p>
+            <UserInputSegment prompt={displayPrompt(mission.prompt)} running={running} />
           </div>
           <span
             className={`studio-status-pill ${
@@ -554,7 +562,7 @@ export function MissionRun({
               parsedData={parsedData}
               resultKind={resultKind}
               exportMd={exportMd}
-              efficiencyScore={overallQualityScore}
+              efficiencyScore={mediaEfficiency ?? overallQualityScore}
               completedCalls={completedCalls}
               totalTokensUsed={totalTokensUsed}
               run={data.run ?? null}
@@ -670,6 +678,7 @@ function ResultSurface({
   parsedData: {
     images?: { url: string; prompt: string; width: number; height: number }[];
     html?: string;
+    promptEnhanced?: boolean;
     verification?: {
       verified: boolean;
       matches: boolean | null;
@@ -762,6 +771,13 @@ function ResultSurface({
           <VerificationBadge verification={parsedData.verification} />
         ) : null}
 
+        {parsedType === "images" && parsedData?.promptEnhanced ? (
+          <p className="studio-enhanced-note">
+            ✦ PROMPT REFINED — the jury LLM rewrote your idea into a richer
+            image prompt (composition, lighting, palette) before rendering.
+          </p>
+        ) : null}
+
         <JuryScorecard dimensions={dimensions} feedback={feedback} />
 
         <div className="studio-efficiency">
@@ -778,8 +794,12 @@ function ResultSurface({
             </div>
           </div>
           <p className="studio-efficiency-note">
-            The AI did not provide a JSON response as requested by the prompt.
-            ({completedCalls} LLM calls · {totalTokensUsed} tokens · ${(run ? run.totalCost : 0).toFixed(2)} spend · graded by model jury)
+            {parsedType === "images" && parsedData?.verification
+              ? parsedData.verification.verified
+                ? parsedData.verification.feedback
+                : `Vision verification skipped (${parsedData.verification.reason ?? "unavailable"}) — image delivered as generated.`
+              : (feedback ?? "")}
+            {` (${completedCalls} LLM call(s) · ${totalTokensUsed} tokens · $${(run ? run.totalCost : 0).toFixed(2)} spend${parsedType === "images" && parsedData?.promptEnhanced ? " · prompt refined by jury LLM" : ""})`}
           </p>
         </div>
 
@@ -837,6 +857,37 @@ function ResultSurface({
           ) : null}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Collapsible USER INPUT segment — the senior's ask: the raw prompt used to
+ * fill the whole result header as body text. Now it's a one-line collapsed
+ * strip the user can expand; while running it stays expanded (feedback loop).
+ */
+function UserInputSegment({ prompt, running }: { prompt: string; running: boolean }) {
+  const [open, setOpen] = React.useState(false);
+  // Auto-collapse once the result lands; stay expanded while working.
+  React.useEffect(() => {
+    if (!running) setOpen(false);
+  }, [running]);
+  const oneLine = prompt.replace(/\s+/g, " ").trim();
+  return (
+    <div className="result-input-segment mt-3 max-w-xl">
+      <button
+        type="button"
+        className="result-input-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <span className="result-input-label">USER INPUT</span>
+        {open ? null : <span className="result-input-preview">{oneLine.slice(0, 90)}{oneLine.length > 90 ? "…" : ""}</span>}
+        <ChevronDown className={`result-input-chevron ${open ? "result-input-chevron-open" : ""}`} />
+      </button>
+      {open || running ? (
+        <p className="result-input-body">{prompt}</p>
+      ) : null}
     </div>
   );
 }

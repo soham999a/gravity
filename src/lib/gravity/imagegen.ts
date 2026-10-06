@@ -14,6 +14,24 @@ export interface ImageGenResult {
 }
 
 /**
+ * Infer output dimensions from the user's intent — asking for a "poster" and
+ * getting a 1024x1024 square wastes most of the composition. Free fix: just
+ * pick the right canvas shape. Diffusion models respond strongly to aspect.
+ */
+export function inferDimensions(prompt: string): { width: number; height: number } {
+  const p = prompt.toLowerCase();
+  // Portrait-first intents (order matters: poster beats wallpaper)
+  if (/(?:poster|flyer|book cover|album cover|movie poster|portrait|character sheet|phone wallpaper)/.test(p)) {
+    return { width: 832, height: 1216 };
+  }
+  // Wide intents
+  if (/(?:banner|header|landscape|wallpaper|desktop|cinematic|wide|panorama|panoramic|website hero)/.test(p)) {
+    return { width: 1216, height: 832 };
+  }
+  return { width: 1024, height: 1024 };
+}
+
+/**
  * Generate an image from a text prompt.
  * Pollinations returns the image directly as a redirect — no API key needed.
  */
@@ -21,8 +39,9 @@ export function generateImageURL(
   prompt: string,
   options?: { width?: number; height?: number; seed?: number },
 ): ImageGenResult {
-  const width = options?.width ?? 1024;
-  const height = options?.height ?? 1024;
+  const dims = inferDimensions(prompt);
+  const width = options?.width ?? dims.width;
+  const height = options?.height ?? dims.height;
   const seed = options?.seed ?? Math.floor(Math.random() * 999999);
 
   const enhancedPrompt = enhancePrompt(prompt);
@@ -35,6 +54,7 @@ export function generateImageURL(
 
 /**
  * Generate multiple image variations with different seeds.
+ * Dimensions come from intent detection (poster → portrait, banner → wide).
  */
 export function generateImageVariations(
   prompt: string,
@@ -42,8 +62,45 @@ export function generateImageVariations(
 ): ImageGenResult[] {
   const baseSeed = Math.floor(Math.random() * 900000);
   return Array.from({ length: count }, (_, i) =>
-    generateImageURL(prompt, { seed: baseSeed + i, width: 1024, height: 1024 }),
+    generateImageURL(prompt, { seed: baseSeed + i }),
   );
+}
+
+/**
+ * Free prompt-enhancer: rewrite the user's idea into a proper diffusion
+ * prompt using an LLM we already have configured (Gemini 2.5 Flash free tier
+ * or Groq). Diffusion models reward composition/lighting/palette detail and
+ * punish long text demands — so we also neutralize "write X on it" asks into
+ * short quoted strings (long rendered text always comes out garbled).
+ *
+ * Returns null on any failure — callers fall back to the raw prompt.
+ */
+export async function enhancePromptWithLLM(
+  userPrompt: string,
+  budgetMs = 12_000,
+): Promise<string | null> {
+  try {
+    const { callLLM } = await import("@/lib/gravity/llm");
+    const res = await callLLM({
+      timeoutMs: Math.max(4_000, budgetMs),
+      system:
+        "You are a prompt engineer for text-to-image diffusion models (Flux). " +
+        "Rewrite the user's request as ONE rich English image prompt.\n" +
+        "Rules:\n" +
+        "- Describe subject, composition, lighting, color palette, art style, mood, camera/medium.\n" +
+        "- 60 words max. No preamble, no quotes around the whole thing, output the prompt only.\n" +
+        "- If the user wants words rendered IN the image, keep at most 1-4 words and put them in double quotes (e.g. a sign that reads \"BREATHE\"). NEVER ask for sentences or paragraphs inside the image — replace with clean negative space.\n" +
+        "- Do not add watermarks, signatures, borders, or logos.",
+      prompt: userPrompt.slice(0, 800),
+      maxTokens: 200,
+      tier: "small",
+    });
+    const out = res.text.trim().replace(/^"+|"+$/g, "");
+    if (!out || out.length < 10 || out.length > 900) return null;
+    return out;
+  } catch {
+    return null;
+  }
 }
 
 /**

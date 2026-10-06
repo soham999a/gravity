@@ -58,9 +58,10 @@ async function fetchImageBytes(
       });
       if (!res.ok) {
         // Pollinations generates lazily on first request; a 5xx may mean
-        // "still cooking" — retry once after a short wait.
-        if (attempt === 0 && res.status >= 500) {
-          await new Promise((r) => setTimeout(r, 4_000));
+        // "still cooking", and 402 is a transient burst throttle (verified:
+        // a later attempt succeeds) — retry once after a short wait.
+        if (attempt === 0 && (res.status >= 500 || res.status === 402)) {
+          await new Promise((r) => setTimeout(r, 5_000));
           continue;
         }
         return null;
@@ -89,13 +90,20 @@ async function fetchImageBytes(
 
 /**
  * Warm up an image URL: Pollinations generates lazily on first request, so a
- * fresh seed can 5xx while it's still cooking. Kick the URL now (with retries)
- * so the second variation is ready when the browser asks for it.
- * Fire-and-forget — never blocks or throws.
+ * fresh seed can 5xx while it's still cooking — and its anonymous tier emits
+ * transient 402 (burst-throttle) responses that succeed on a later try.
+ * Kick the URL now (with retries) so the image is ready when the browser or
+ * the vision verifier asks for it.
+ * Fire-and-forget safe — never blocks indefinitely or throws.
  */
-export async function warmupImage(url: string): Promise<void> {
+export async function warmupImage(
+  url: string,
+  opts?: { notAfter?: number },
+): Promise<void> {
   if (!url) return;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const notAfter = opts?.notAfter;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (notAfter !== undefined && Date.now() > notAfter) return;
     try {
       const res = await fetch(url, {
         signal: AbortSignal.timeout(30_000),
@@ -106,13 +114,16 @@ export async function warmupImage(url: string): Promise<void> {
         await res.arrayBuffer();
         return;
       }
-      if (res.status >= 500) {
-        await new Promise((r) => setTimeout(r, 3_000));
+      // Retryable: 5xx (still cooking) and 402 (transient burst throttle —
+      // probe-verified that a later attempt succeeds). Everything else: stop.
+      if (res.status >= 500 || res.status === 402) {
+        await new Promise((r) => setTimeout(r, 4_000));
         continue;
       }
-      return; // 4xx etc. — retrying won't help
+      return; // 4xx (other) — retrying won't help
     } catch {
-      await new Promise((r) => setTimeout(r, 3_000));
+      if (notAfter !== undefined && Date.now() > notAfter) return;
+      await new Promise((r) => setTimeout(r, 4_000));
     }
   }
 }
