@@ -10,11 +10,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
-          cache-dependency-path: _soham-gravity/package-lock.json
-      - working-directory: _soham-gravity
+      # The app IS the repo root (there is no _soham-gravity/ subfolder on GitHub).
+      - run: npm ci || npm install
+      - run: npm run build
+      # test:prod is a live smoke test — it needs a running production server.
+      - name: Prod smoke test
         run: |
-          npm ci || npm install
+          npm run start &
+          npx wait-on http://localhost:3000/api/health -t 90000
           npm run test:prod
-          npm run build
