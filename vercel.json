@@ -1,5 +1,8 @@
 {
   "functions": {
+    "src/app/api/benchmark/route.ts": {
+      "maxDuration": 120
+    },
     "src/app/api/**/*": {
       "maxDuration": 60
     }

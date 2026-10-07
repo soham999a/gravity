@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { ArrowRight, FileSpreadsheet, Paperclip, X } from "lucide-react";
+import { IMAGE_MODELS, type ImageModelId } from "@/lib/gravity/imageModels";
 
 export interface CsvFile {
   data: string;
@@ -19,10 +20,11 @@ export function TaskComposer({
   busy?: boolean;
   compact?: boolean;
   autoFocus?: boolean;
-  onSubmit: (prompt: string, files?: CsvFile[]) => void;
+  onSubmit: (prompt: string, files?: CsvFile[], imageModel?: ImageModelId) => void;
 }) {
   const [prompt, setPrompt] = React.useState(initialValue);
   const [files, setFiles] = React.useState<CsvFile[]>([]);
+  const [imageModel, setImageModel] = React.useState<ImageModelId>("auto");
   const [dragOver, setDragOver] = React.useState(false);
   const [boxHeight, setBoxHeight] = React.useState<number | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -95,6 +97,7 @@ export function TaskComposer({
     onSubmit(
       prompt.trim(),
       files.length > 0 ? files : undefined,
+      imageModel,
     );
     // Clear the box after sending — ChatGPT-style. The submitted prompt is
     // already captured by the parent (thread + mission), so keeping the old
@@ -222,6 +225,21 @@ export function TaskComposer({
             <Paperclip className="size-3.5" />
             <span className="hidden sm:inline">{files.length > 0 ? "Add more" : "CSV"}</span>
           </button>
+          <label className="flex items-center gap-1.5" title="Image model — used when GRAVITY routes to image generation">
+            <span className="gravity-composer-hint hidden sm:inline">IMG</span>
+            <select
+              value={imageModel}
+              onChange={(e) => setImageModel(e.target.value as ImageModelId)}
+              className="rounded border border-border bg-surface px-1.5 py-1 text-[11px] text-ivory"
+              aria-label="Image generation model"
+            >
+              {IMAGE_MODELS.map((m) => (
+                <option key={m.id} value={m.id} title={m.hint}>
+                  {m.label} · {m.hint}
+                </option>
+              ))}
+            </select>
+          </label>
           <span className="gravity-composer-hint">
             ENTER TO RUN · SHIFT+ENTER NEW LINE
           </span>

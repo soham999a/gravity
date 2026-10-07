@@ -46,6 +46,7 @@ export async function POST(request: Request) {
       prompt?: string;
       files?: CsvFile[];
       forceStrategy?: string;
+      imageModel?: string;
     };
     let prompt = body.prompt?.trim();
     if (!prompt) {
@@ -100,6 +101,7 @@ export async function POST(request: Request) {
       userId: ctx.uid,
       files: body.files,
       forceStrategy: body.forceStrategy,
+      imageModel: body.imageModel,
     });
 
     return NextResponse.json(

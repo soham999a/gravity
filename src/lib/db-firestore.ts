@@ -172,6 +172,9 @@ export interface MissionDoc {
   totalLatencyMs: number | null;
   createdAt: string;
   completedAt: string | null;
+  /** User-picked image model for image_generation missions ("auto" default).
+   *  Optional so pre-existing docs read back fine (undefined → auto). */
+  imageModel?: string | null;
 }
 
 export async function createMission(data: Omit<MissionDoc, "id" | "createdAt">): Promise<MissionDoc> {

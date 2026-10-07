@@ -245,6 +245,8 @@ async function callGroq(opts: LLMOpts): Promise<LLMResult> {
 /** Published USD prices per 1M tokens (peak rates; conservative upper bound). */
 const PRICE_TABLE: Record<string, { input: number; output: number; cachedInput?: number }> = {
   "deepseek-flash": { input: 0.3, output: 1.2, cachedInput: 0.006 },
+  "deepseek/deepseek-v4.1-flash": { input: 0.045, output: 1.2, cachedInput: 0.01 },
+  "nvidia/nemotron-3-super-120b-a12b:free": { input: 0, output: 0 },
   "anthropic/claude-sonnet-5.5": { input: 2.0, output: 10.0, cachedInput: 0.2 },
   "gemini-2.5-flash": { input: 0.3, output: 2.5 },
   "gemini-2.5-flash-lite": { input: 0.1, output: 0.4 },
@@ -308,7 +310,7 @@ async function callOpenAICompatible(
       ? process.env.CODECRAFT_MODEL ?? "claude-opus-5"
       : isCleanApis
         ? process.env.CLEANAPIS_MODEL ?? "claude-opus-5"
-        : process.env.OPENROUTER_MODEL ?? "anthropic/claude-sonnet-5.5");
+        : process.env.OPENROUTER_MODEL ?? "deepseek/deepseek-v4.1-flash");
   const label = isDeepSeek ? "DeepSeek" : isCodeCraft ? "CodeCraft" : isCleanApis ? "CleanApis" : "OpenRouter";
 
   const body = JSON.stringify({

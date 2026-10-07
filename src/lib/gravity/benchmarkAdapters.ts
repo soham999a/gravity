@@ -40,8 +40,8 @@ export const PINNED_CONFIG = {
   CLAUDE_MODEL: process.env.BENCH_CLAUDE_MODEL ?? "anthropic/claude-sonnet-5.5",
   /** OpenAI rung — provider-pinned OpenAI-family model. */
   OPENAI_MODEL: process.env.BENCH_OPENAI_MODEL ?? "openai/gpt-oss-120b",
-  /** Raw OpenRouter pin (no kernel) — free-tier default. */
-  OPENROUTER_MODEL: process.env.OPENROUTER_MODEL ?? "nvidia/nemotron-3-super-120b-a12b:free",
+  /** Raw OpenRouter pin (no kernel) — $5 pay-as-you-go workhorse. */
+  OPENROUTER_MODEL: process.env.OPENROUTER_MODEL ?? "deepseek/deepseek-v4.1-flash",
   TEMPERATURE: 0.7,
   MAX_TOKENS: 2048,
 } as const;

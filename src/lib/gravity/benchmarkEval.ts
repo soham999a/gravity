@@ -63,25 +63,41 @@ export const GROUND_TRUTH: Record<WorkloadClassId, TaskTruth> = {
   C: {
     difficulty: "HARD",
     successCriterion:
-      "Escalation ladder fires: substantive model output with real reasoning spend (subjective quality marked as such per spec).",
-    textCheck: (output) => output.length >= 250,
+      "Escalation ladder fires: substantive model output (≥250 chars) that actually engages the prompt — recommends an option with trade-offs/evidence (subjective quality marked as such per spec).",
+    textCheck: (output) =>
+      output.length >= 250 &&
+      /(recommend|trade-?offs?|option\s+[AB]|evidence|strategy)/i.test(output),
     structuralCheck: (facts) => facts.level !== null && facts.level >= 3 && facts.tokens > 0,
-    staticCheck: (output) => output.length >= 250,
+    staticCheck: (output) =>
+      output.length >= 250 &&
+      /(recommend|trade-?offs?|option\s+[AB]|evidence|strategy)/i.test(output),
   },
   D: {
     difficulty: "MEDIUM",
     successCriterion:
-      "All orchestration steps complete with non-empty outputs, and the integrated answer is substantive (rule satisfaction over the execution plan).",
+      "All orchestration steps complete with non-empty outputs, and the integrated answer covers ≥2 of the 3 workstreams (financial / operational-logistics / competitive) — not generic padding.",
     structuralCheck: (facts) =>
       facts.stepCount > 0 && facts.steps.every((step) => step.status === "completed"),
-    staticCheck: (output) => output.length >= 100,
+    staticCheck: (output) => {
+      if (output.length < 100) return false;
+      const hits = [
+        /financ/i.test(output),
+        /operation|logistics|deliver/i.test(output),
+        /competit/i.test(output),
+      ].filter(Boolean).length;
+      // Numbered workstream format "(1)…(2)…(3)" also counts as coverage.
+      const numbered = /\(1\)[\s\S]*\(2\)[\s\S]*\(3\)/.test(output);
+      return hits >= 2 || numbered;
+    },
   },
   E: {
     difficulty: "HARD",
     successCriterion:
-      "Run completes despite the injected mid-run resource failure — the orchestrator absorbed the change (run status, not wording).",
+      "Run completes despite the injected mid-run resource failure AND the answer engages resilience (risk/mitigation/recovery/retry) — the orchestrator absorbed the change (run status + wording).",
     structuralCheck: (facts) => facts.stepCount > 0 && facts.steps.every((step) => step.status === "completed"),
-    staticCheck: (output) => output.length >= 100,
+    staticCheck: (output) =>
+      output.length >= 100 &&
+      /(risk|mitigat|resilien|recover|retry|fail|degrad|contingen)/i.test(output),
   },
 };
 
@@ -177,9 +193,12 @@ export function evaluateRecord(
     };
   }
   const passed = check(raw);
+  // Scaled (not fixed): length-proportional credit so a 2500-char grounded
+  // brief scores above a 260-char bare pass. Still deterministic.
+  const quality = passed ? Math.min(0.9, 0.7 + raw.length / 4000) : 0.3;
   return {
     success: passed,
-    qualityScore: passed ? 0.85 : 0.3,
+    qualityScore: Math.round(quality * 100) / 100,
     correctness: passed ? 1.0 : 0.0,
     completeness: passed ? 1.0 : 0.0,
     verificationStatus: passed ? "PASS" : "FAIL",

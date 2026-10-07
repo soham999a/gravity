@@ -25,7 +25,11 @@ function getAdminApp() {
   }
   try {
     adminApp = getApps().length === 0
-      ? initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) })
+      ? initializeApp({
+          credential: cert({ projectId, clientEmail, privateKey }),
+          // Needed for paid image uploads (OpenRouter b64 → hosted URL).
+          storageBucket: process.env.FIREBASE_STORAGE_BUCKET ?? `${projectId}.appspot.com`,
+        })
       : getApps()[0]!;
     return adminApp;
   } catch (err) {
@@ -53,6 +57,30 @@ function getAdminAuth(): Auth {
   if (!app) throw new Error("Firebase Admin not configured — check FIREBASE_PRIVATE_KEY env var");
   _auth = getAuth(app);
   return _auth;
+}
+
+/**
+ * Upload buffer → hosted URL for paid image generations (OpenRouter returns
+ * base64 bytes, but the pipeline + verifier + UI all speak URLs).
+ * Throws when Storage is unavailable — callers fall back to Pollinations.
+ */
+export async function uploadImageBuffer(
+  buffer: Buffer,
+  dest: string,
+  contentType = "image/png",
+): Promise<string> {
+  const app = getAdminApp();
+  if (!app) throw new Error("Firebase Admin not configured — cannot upload image");
+  const { getStorage } = await import("firebase-admin/storage");
+  const bucket = getStorage(app).bucket();
+  const file = bucket.file(dest);
+  await file.save(buffer, { metadata: { contentType } });
+  // Signed URL (30 days) — works without making the bucket public.
+  const [url] = await file.getSignedUrl({
+    action: "read",
+    expires: Date.now() + 30 * 24 * 3600 * 1000,
+  });
+  return url;
 }
 
 // Proxy exports so existing imports work: adminDb.collection(...), adminAuth.verifyIdToken(...)

@@ -31,10 +31,12 @@ import { stripDataMarkers } from "@/lib/gravity/promptText";
 import {
   generateImageVariations,
   generateImageURL,
+  inferDimensions,
   planImagePrompts,
   buildRepairPrompt,
 } from "@/lib/gravity/imagegen";
 import { generateWebsite } from "@/lib/gravity/sitegen";
+import { normalizeImageModel } from "@/lib/gravity/imageModels";
 import type { StrategyKind } from "@/lib/gravity/types";
 
 type Complexity = "low" | "medium" | "high" | "critical";
@@ -791,6 +793,28 @@ export async function executeMission(missionId: string): Promise<void> {
       // clean negative space for them. Falls back to heuristic tags.
       const plan = await planImagePrompts(cleanPrompt, { budgetMs: 12_000 });
 
+      // ── PAID PRIMARY ($5 OpenRouter) → FREE FALLBACK (Pollinations) ───
+      // Best result first: 1 HD paid render. Any paid failure (no key, ≤$1
+      // balance, render error, Storage upload error) degrades to the free
+      // path — paid is strictly an upgrade, never a breakage.
+      let paidImage: { url: string; model: string; costUsd: number | null } | null = null;
+      const dims = inferDimensions(plan.imagePrompt);
+      try {
+        const { generatePaidImage } = await import("./imageOpenRouter");
+        const picked = normalizeImageModel((mission as { imageModel?: string | null }).imageModel ?? "auto");
+        if (picked !== "free") {
+          const paid = await generatePaidImage(plan.imagePrompt, {
+            width: dims.width,
+            height: dims.height,
+            runId: run.id,
+            model: picked,
+          });
+          paidImage = { url: paid.url, model: paid.model, costUsd: paid.costUsd };
+        }
+      } catch (err) {
+        console.warn("[pipeline] paid image failed, using free fallback:", String(err).slice(0, 160));
+      }
+
       const images = generateImageVariations(plan.imagePrompt, 2);
 
       // Pollinations renders lazily on first request and burst-throttles
@@ -800,6 +824,9 @@ export async function executeMission(missionId: string): Promise<void> {
       // verification receives real bytes; the second is fire-and-forget.
       // Both are bounded by the run deadline (minus verify headroom).
       const warmNotAfter = deadlineAt - 15_000;
+      if (paidImage) {
+        await warmupImage(paidImage.url, { notAfter: warmNotAfter });
+      }
       if (images[0]) {
         await warmupImage(images[0].url, { notAfter: warmNotAfter });
       }
@@ -807,20 +834,25 @@ export async function executeMission(missionId: string): Promise<void> {
         void warmupImage(images[1].url, { notAfter: warmNotAfter }).catch(() => {});
       }
 
-      let imgItems = images.map((img) => ({
-        url: img.url,
-        prompt: img.prompt,
-        width: img.width,
-        height: img.height,
-        seed: img.seed,
-      }));
+      let imgItems = [
+        ...(paidImage
+          ? [{ url: paidImage.url, prompt: plan.imagePrompt, width: dims.width, height: dims.height }]
+          : []),
+        ...images.map((img) => ({
+          url: img.url,
+          prompt: img.prompt,
+          width: img.width,
+          height: img.height,
+          seed: img.seed,
+        })),
+      ];
 
       await executeNode({
         runId: run.id,
         name: "Image Generation",
         type: "image_generation",
         stage: "L1 · Generate",
-        purpose: `Generate ${imgItems.length} image(s) from: "${cleanPrompt.slice(0, 80)}"${plan.enhanced ? " · planned by jury LLM" : ""}`,
+        purpose: `Generate ${imgItems.length} image(s) from: "${cleanPrompt.slice(0, 80)}"${plan.enhanced ? " · planned by jury LLM" : ""}${paidImage ? ` · HD paid ${paidImage.model} ($${paidImage.costUsd ?? "?"})` : " · free tier"}`,
         prompt: plan.imagePrompt.slice(0, 500),
         outputOverride: JSON.stringify({
           type: "images",
@@ -828,6 +860,7 @@ export async function executeMission(missionId: string): Promise<void> {
           mainPrompt: cleanPrompt,
           promptEnhanced: plan.enhanced,
           overlay: plan.overlay,
+          paidImage: paidImage ?? null,
         }),
       });
 
@@ -1370,6 +1403,10 @@ export async function createMissionWithPlan(
      *  compare intelligence paths on the identical task. Invalid values are
      *  ignored and adaptive routing is kept. */
     forceStrategy?: string;
+    /** User-picked image model for image_generation missions. Validated
+     *  against the IMAGE_MODELS allowlist; "auto" (default) = paid HD first
+     *  with free fallback, "free" = Pollinations only. */
+    imageModel?: string;
   },
 ) {
   // If files are provided, embed them in the prompt using the data marker
@@ -1402,6 +1439,7 @@ export async function createMissionWithPlan(
     totalTokens: null,
     totalLatencyMs: null,
     completedAt: null,
+    imageModel: normalizeImageModel(ctx?.imageModel),
   });
 
   await createProblemProfile({

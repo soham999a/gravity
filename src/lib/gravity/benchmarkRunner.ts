@@ -128,37 +128,147 @@ export async function runBenchmark(options: RunnerOptions = {}): Promise<RunnerR
 
   const taskDefs = loadTaskDefs(classes).map(freezeTask);
   const total = taskDefs.length * runsPerClass * systems.length;
+  // Guard: a full 5×3×6 = 90 live missions can never fit in one
+  // serverless invocation (vercel maxDuration 120s). Fail fast with guidance
+  // instead of timing out halfway and persisting a partial run.
+  const MAX_COMBOS = 30;
+  if (total > MAX_COMBOS) {
+    throw new Error(
+      `Benchmark too large: ${total} combos (systems × classes × runs). Max ${MAX_COMBOS} per run ` +
+        `— pick fewer systems/classes or runsPerClass=1. E.g. 2 systems × 5 classes × 1 run = 10.`,
+    );
+  }
   let current = 0;
 
+  // Build a flat job list so independent (system, class, run) pairs can run
+  // with limited concurrency instead of fully sequentially.
+  // Exception: Class E arms a global one-shot failure flag
+  // (__gravity_inject_failure__ in classes.ts) — E jobs must stay serial
+  // or parallel runs would steal each other's injected failure.
+  type Job = { def: (typeof taskDefs)[number]; run: number; system: BenchmarkSystem };
+  const allJobs: Job[] = [];
   for (const def of taskDefs) {
     for (let run = 0; run < runsPerClass; run += 1) {
       for (const system of systems) {
-        current += 1;
-        options.onProgress?.({
-          current,
-          total,
-          label: `${system} · class ${def.id} · run ${run + 1}/${runsPerClass}`,
-        });
-
-        if (system === "JEV" && !JEV_WIRED) {
-          if (!skippedSystems.some((skip) => skip.system === system)) {
-            skippedSystems.push({
-              system,
-              reason: "JEV adapter declared in the graph but its REST API is not wired into this deployment.",
-            });
-          }
-          // Still run the stub so the record shows the honest UNSUPPORTED error.
-          const stubRecord = await dispatchAdapter(system, def, runId);
-          records.push(mergeVerdict(stubRecord, evaluateRecord(def.id, stubRecord)));
-          continue;
-        }
-
-        // Box 2 → Box 3 → Box 4
-        const record = await dispatchAdapter(system, def, runId);
-        const verdict = evaluateRecord(def.id, record);
-        records.push(mergeVerdict(record, verdict));
+        allJobs.push({ def, run, system });
       }
     }
+  }
+  const parallelJobs = allJobs.filter((j) => j.def.id !== "E");
+  const serialJobs = allJobs.filter((j) => j.def.id === "E");
+
+  const CONCURRENCY = 3;
+  const TASK_TIMEOUT_MS = 50_000;
+
+  async function runOneJob(job: Job): Promise<BenchmarkRecord> {
+    const { def, run, system } = job;
+    current += 1;
+    options.onProgress?.({
+      current,
+      total,
+      label: `${system} · class ${def.id} · run ${run + 1}/${runsPerClass}`,
+    });
+
+    if (system === "JEV" && !JEV_WIRED) {
+      if (!skippedSystems.some((skip) => skip.system === system)) {
+        skippedSystems.push({
+          system,
+          reason: "JEV adapter declared in the graph but its REST API is not wired into this deployment.",
+        });
+      }
+      // Still run the stub so the record shows the honest UNSUPPORTED error.
+      const stubRecord = await dispatchAdapter(system, def, runId);
+      return mergeVerdict(stubRecord, evaluateRecord(def.id, stubRecord));
+    }
+
+    // Box 2 → Box 3 → Box 4, with a per-task timeout so one hung LLM call
+    // can't wedge the whole run into a Vercel timeout with zero records.
+    const work = (async () => {
+      const record = await dispatchAdapter(system, def, runId);
+      const verdict = evaluateRecord(def.id, record);
+      return mergeVerdict(record, verdict);
+    })();
+    const timeout = new Promise<BenchmarkRecord>((resolve) => {
+      setTimeout(() => {
+        resolve({
+          taskId: `wlc-${def.id}`,
+          taskVersion: TASK_VERSION,
+          workloadClass: def.id,
+          system,
+          runMode: system.startsWith("GRAVITY") && system !== "GRAVITY-OPENROUTER" ? "ADAPTIVE" : "STATIC",
+          model: null,
+          provider: null,
+          modelVersion: null,
+          configHash: "",
+          difficulty: "MEDIUM",
+          successCriterion: "",
+          success: false,
+          qualityScore: null,
+          correctness: null,
+          completeness: null,
+          verificationStatus: "FAIL",
+          inputTokens: null,
+          outputTokens: null,
+          reasoningTokens: null,
+          cachedTokens: null,
+          modelCalls: 0,
+          toolCalls: 0,
+          retries: 0,
+          escalations: 0,
+          latencyMs: TASK_TIMEOUT_MS,
+          ttftMs: null,
+          cpuSeconds: null,
+          gpuSeconds: null,
+          memoryGbSeconds: null,
+          parallelWorkers: 1,
+          peakConcurrency: 1,
+          cost: {
+            modelCost: null,
+            computeCost: null,
+            toolCost: null,
+            verificationCost: null,
+            orchestrationCost: null,
+            totalCost: null,
+          },
+          metadata: {
+            error: `task timeout after ${TASK_TIMEOUT_MS}ms — adapter hung (likely LLM throttle)`,
+            error_type: "task_timeout",
+          },
+          intelligenceLevel: null,
+          route: null,
+          earlyStop: null,
+          resourceEfficiency: null,
+          decisionEfficiency: null,
+          escalationEfficiency: null,
+          policyVersion: null,
+          benchmarkRunId: runId,
+          timestamp: new Date().toISOString(),
+        });
+      }, TASK_TIMEOUT_MS);
+    });
+    return Promise.race([work, timeout]);
+  }
+
+  // Limited-concurrency pool for non-E jobs.
+  const out: BenchmarkRecord[] = new Array(allJobs.length);
+  const jobIndex = new Map(allJobs.map((j, i) => [j, i]));
+  async function worker(queue: Job[]) {
+    while (queue.length > 0) {
+      const job = queue.shift()!;
+      out[jobIndex.get(job)!] = await runOneJob(job);
+    }
+  }
+  const queue = [...parallelJobs];
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, queue.length) }, () => worker(queue)),
+  );
+  // Class E strictly serial, in original order.
+  for (const job of serialJobs) {
+    out[jobIndex.get(job)!] = await runOneJob(job);
+  }
+  // Reassemble in the original frozen task order (A→E).
+  for (const job of allJobs) {
+    records.push(out[jobIndex.get(job)!]!);
   }
 
   const manifest: BenchmarkRunManifest = {

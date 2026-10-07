@@ -4,6 +4,8 @@ import {
   planImagePrompts,
   generateImageURL,
 } from "@/lib/gravity/imagegen";
+import { normalizeImageModel } from "@/lib/gravity/imageModels";
+import { generatePaidImage } from "@/lib/gravity/imageOpenRouter";
 import { warmupImage } from "@/lib/gravity/verifyImage";
 
 export const maxDuration = 60;
@@ -18,6 +20,8 @@ interface RefineBody {
   seed?: number;
   width?: number;
   height?: number;
+  /** Image model override — same menu as the studio composer. */
+  model?: string;
 }
 
 /**
@@ -74,6 +78,34 @@ export async function POST(request: Request) {
   const plan = await planImagePrompts(`${basePrompt}. Style adjustment: ${nudge}`, {
     budgetMs: 10_000,
   });
+
+  // Paid HD refine when the caller picked a paid model and it's configured —
+  // otherwise the free seed-stable path (unchanged behavior).
+  const picked = normalizeImageModel(body.model ?? "auto");
+  if (picked !== "free") {
+    try {
+      const paid = await generatePaidImage(plan.imagePrompt, {
+        width,
+        height,
+        model: picked,
+      });
+      return NextResponse.json({
+        ok: true,
+        image: {
+          url: paid.url,
+          prompt: paid.prompt,
+          width: paid.width,
+          height: paid.height,
+          seed: null,
+        },
+        overlay: plan.overlay,
+        refined: true,
+        paidImage: { model: paid.model, costUsd: paid.costUsd },
+      });
+    } catch (err) {
+      console.warn("[image/refine] paid failed, free fallback:", String(err).slice(0, 140));
+    }
+  }
 
   // Stable seed = coherent composition; nudge lives only in the prompt.
   const gen = generateImageURL(plan.imagePrompt, { seed, width, height });

@@ -101,6 +101,18 @@ export async function POST(request: Request) {
   const runsPerClass = Math.min(Math.max(body.runsPerClass ?? 1, 1), 3);
   const seed = typeof body.seed === "number" ? body.seed : 42;
 
+  // Fail fast before burning LLM budget / serverless seconds.
+  const combos = systems.length * classes.length * runsPerClass;
+  if (combos > 30) {
+    return NextResponse.json(
+      { error: `Too large: ${combos} combos (systems × classes × runs). Max 30 per run — pick fewer systems/classes or runsPerClass=1.` },
+      { status: 400 },
+    );
+  }
+  if (classes.length === 0) {
+    return NextResponse.json({ error: "pick at least one class: A, B, C, D, E" }, { status: 400 });
+  }
+
   const progress: RunnerProgress[] = [];
   try {
     const result = await runBenchmark({

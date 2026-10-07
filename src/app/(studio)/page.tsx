@@ -86,11 +86,11 @@ function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-async function startMission(prompt: string, files?: CsvFile[], forceStrategy?: string | null): Promise<string> {
+async function startMission(prompt: string, files?: CsvFile[], forceStrategy?: string | null, imageModel?: string | null): Promise<string> {
   const res = await fetch("/api/missions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, files, forceStrategy: forceStrategy ?? undefined }),
+    body: JSON.stringify({ prompt, files, forceStrategy: forceStrategy ?? undefined, imageModel: imageModel ?? undefined }),
     credentials: "include",
   });
   if (!res.ok) throw new Error(`Status ${res.status}`);
@@ -115,7 +115,7 @@ function HomeContent() {
     () => typeof document !== "undefined" && document.cookie.includes("fb-token="),
   );
   const [authOpen, setAuthOpen] = React.useState(false);
-  const [pendingRun, setPendingRun] = React.useState<{ prompt: string; files?: CsvFile[] } | null>(null);
+  const [pendingRun, setPendingRun] = React.useState<{ prompt: string; files?: CsvFile[]; imageModel?: string } | null>(null);
 
   React.useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => setIsAuthed(Boolean(user)));
@@ -170,12 +170,12 @@ function HomeContent() {
     }
   }, [missionId]);
 
-  const runMission = async (prompt: string, files?: CsvFile[]) => {
+  const runMission = async (prompt: string, files?: CsvFile[], imageModel?: string) => {
     setBusy(true);
     setSubmitError(null);
     setMissionId(null);
     try {
-      const id = await startMission(prompt, files);
+      const id = await startMission(prompt, files, null, imageModel);
       setMissionId(id);
       setThread((prev) => [...prev, { id, prompt }]);
     } catch {
@@ -187,21 +187,21 @@ function HomeContent() {
     }
   };
 
-  const submit = (prompt: string, files?: CsvFile[]) => {
+  const submit = (prompt: string, files?: CsvFile[], imageModel?: string) => {
     if (!isAuthed) {
       // Keep what they typed; pop the sign-in; run it right after.
-      setPendingRun({ prompt, files });
+      setPendingRun({ prompt, files, imageModel });
       setAuthOpen(true);
       return;
     }
-    void runMission(prompt, files);
+    void runMission(prompt, files, imageModel);
   };
 
   const handleAuthSuccess = () => {
     setAuthOpen(false);
     const run = pendingRun;
     setPendingRun(null);
-    if (run) void runMission(run.prompt, run.files);
+    if (run) void runMission(run.prompt, run.files, run.imageModel);
   };
 
   const handleFollowUp = async (refinement: string) => {

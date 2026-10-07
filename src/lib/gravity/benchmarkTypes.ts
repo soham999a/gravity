@@ -135,7 +135,7 @@ export interface BenchmarkRunManifest {
   recordCount: number;
 }
 
-export const TASK_VERSION = "workload-classes-v1";
+export const TASK_VERSION = "workload-classes-v2";
 
 /** Deterministic config fingerprint per the spec's "Configuration to Freeze"
  *  — SHA-256 over system|model|temperature|maxTokens|prompt, so any config
