@@ -34,12 +34,22 @@ export interface LLMResult {
   cachedTokens?: number;
   /** Measured cost in USD from published price tables; null when unpriced. */
   costUsd?: number | null;
+  /** Attempts spent across the retry/fallback plan (senior's attempt telemetry). */
+  attempts?: number;
+}
+
+export interface ChatTurn {
+  role: "system" | "user" | "assistant";
+  content: string;
 }
 
 export interface LLMOpts {
   tier?: "general" | "small";
   system?: string;
   prompt: string;
+  /** Full conversation history (multi-turn, ported from intelligence-fabric).
+   *  Sent as the message list with `prompt` as the final user turn. */
+  history?: ChatTurn[];
   json?: boolean;
   maxTokens?: number;
   temperature?: number;
@@ -88,15 +98,46 @@ function retryable(status: number): boolean {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Multi-turn message builder (ported from intelligence-fabric openrouter.ts).
+ * History ships as the message list, `prompt` is the final user turn.
+ * Empty turns dropped; injected `system` roles in history stripped.
+ */
+function buildChatMessages(opts: LLMOpts): { role: string; content: string }[] {
+  const history = (opts.history ?? []).filter(
+    (m) => m.role !== "system" && m.content.trim().length > 0,
+  );
+  const messages: { role: string; content: string }[] = [
+    ...(opts.system ? [{ role: "system", content: opts.system }] : []),
+    ...history,
+  ];
+  if (opts.prompt.trim()) messages.push({ role: "user", content: opts.prompt });
+  return messages.length > 0 ? messages : [{ role: "user", content: opts.prompt }];
+}
+
+/** Exponential backoff between attempts: 600ms base, doubling, capped 2.5s. */
+function backoffMs(attempt: number): number {
+  return Math.min(600 * 2 ** attempt, 2500);
+}
+
 async function callGemini(opts: LLMOpts): Promise<LLMResult> {
   const key = process.env.GEMINI_API_KEY!;
   const model =
     process.env.GEMINI_MODEL ??
     (opts.tier === "small" ? "gemini-2.5-flash-lite" : "gemini-2.5-flash");
 
+  const geminiContents = [
+    ...(opts.history ?? [])
+      .filter((m) => m.role !== "system" && m.content.trim().length > 0)
+      .map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      })),
+    { role: "user", parts: [{ text: opts.prompt }] },
+  ];
   const body = JSON.stringify({
     ...(opts.system ? { system_instruction: { parts: [{ text: opts.system }] } } : {}),
-    contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
+    contents: geminiContents,
     generationConfig: {
       temperature: opts.temperature ?? 0.4,
       maxOutputTokens: opts.maxTokens ?? 768,
@@ -167,10 +208,7 @@ async function callGroq(opts: LLMOpts): Promise<LLMResult> {
   const model = process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile";
   const body = JSON.stringify({
     model,
-    messages: [
-      ...(opts.system ? [{ role: "system", content: opts.system }] : []),
-      { role: "user", content: opts.prompt },
-    ],
+    messages: buildChatMessages(opts),
     temperature: opts.temperature ?? 0.4,
     max_tokens: Math.max(opts.maxTokens ?? 512, 768),
     reasoning_effort: "low",
@@ -304,7 +342,7 @@ async function callOpenAICompatible(
       : isCleanApis
         ? process.env.CLEANAPIS_API_KEY!
         : process.env.OPENROUTER_API_KEY!;
-  const model = opts.model ?? (isDeepSeek
+  const primaryModel = opts.model ?? (isDeepSeek
     ? process.env.DEEPSEEK_MODEL ?? "deepseek-flash"
     : isCodeCraft
       ? process.env.CODECRAFT_MODEL ?? "claude-opus-5"
@@ -313,21 +351,40 @@ async function callOpenAICompatible(
         : process.env.OPENROUTER_MODEL ?? "deepseek/deepseek-v4.1-flash");
   const label = isDeepSeek ? "DeepSeek" : isCodeCraft ? "CodeCraft" : isCleanApis ? "CleanApis" : "OpenRouter";
 
-  const body = JSON.stringify({
-    model,
-    messages: [
-      ...(opts.system ? [{ role: "system", content: opts.system }] : []),
-      { role: "user", content: opts.prompt },
-    ],
-    temperature: opts.temperature ?? 0.4,
-    max_tokens: opts.maxTokens ?? 768,
-    ...(opts.json ? { response_format: { type: "json_object" } } : {}),
-  });
+  // Attempt plan (ported from intelligence-fabric openrouter.ts): 2 tries per
+  // model, max 4 total, exponential backoff. An explicit opts.model pins to
+  // that model only (benchmark discipline — no silent fallback). Otherwise
+  // the OpenRouter rung walks OPENROUTER_FALLBACK_MODELS (comma-separated).
+  const plan: string[] = [];
+  const pushModel = (m: string) => {
+    for (let i = 0; i < 2 && plan.length < 4; i += 1) plan.push(m);
+  };
+  pushModel(primaryModel);
+  if (!opts.model && kind === "openrouter") {
+    const fallbacks = (process.env.OPENROUTER_FALLBACK_MODELS ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const f of fallbacks) {
+      if (plan.length >= 4) break;
+      if (f !== primaryModel) pushModel(f);
+    }
+  }
 
   let result: LLMResult | null = null;
   let lastErr: unknown;
+  let skipBackoff = false;
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (const [attempt, model] of plan.entries()) {
+    if (attempt > 0 && !skipBackoff) await sleep(backoffMs(attempt - 1));
+    skipBackoff = false;
+    const body = JSON.stringify({
+      model,
+      messages: buildChatMessages(opts),
+      temperature: opts.temperature ?? 0.4,
+      max_tokens: opts.maxTokens ?? 768,
+      ...(opts.json ? { response_format: { type: "json_object" } } : {}),
+    });
     const started = Date.now();
     try {
       const res = await fetch(url, {
@@ -346,14 +403,14 @@ async function callOpenAICompatible(
       if (!res.ok) {
         const errText = await res.text();
         const err = new Error(`${label} ${res.status}: ${errText.slice(0, 300)}`);
-        if (isThrottled(res.status, errText) && attempt === 0) {
+        if (isThrottled(res.status, errText)) {
           lastErr = err;
           await sleep(throttleDelayMs(errText));
+          skipBackoff = true;
           continue;
         }
-        if (retryable(res.status) && attempt === 0) {
+        if (retryable(res.status)) {
           lastErr = err;
-          await sleep(1200);
           continue;
         }
         throw err;
@@ -380,19 +437,135 @@ async function callOpenAICompatible(
         inputTokens: inputTokens ?? undefined,
         cachedTokens: cachedTokens || undefined,
         costUsd: estimateCostUsd(model, inputTokens, outputTokens, cachedTokens),
+        attempts: attempt + 1,
       };
       break;
     } catch (err) {
       lastErr = err;
-      if (attempt === 0) {
-        await sleep(1200);
-        continue;
-      }
+      // Network/timeout errors ride the backoff loop; nothing special here.
     }
   }
 
   if (!result) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   return result;
+}
+
+/**
+ * Streaming variant for the OpenRouter rung (ported from
+ * intelligence-fabric openrouter.ts `streamWithOpenRouter`).
+ * Token deltas stream via onDelta; abort mid-flight with `signal`.
+ * Same attempt plan as callOpenAICompatible; deltas fire only for the
+ * winning attempt (failed attempts never emit partial text).
+ * Not wired to any UI yet — chat-thread display is the next step.
+ */
+export async function streamOpenRouter(
+  opts: LLMOpts & { onDelta: (chunk: string) => void; signal?: AbortSignal },
+): Promise<LLMResult> {
+  if (!process.env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY_MISSING");
+  const key = process.env.OPENROUTER_API_KEY;
+  const primaryModel = opts.model ?? process.env.OPENROUTER_MODEL ?? "deepseek/deepseek-v4.1-flash";
+
+  const plan: string[] = [];
+  const pushModel = (m: string) => {
+    for (let i = 0; i < 2 && plan.length < 4; i += 1) plan.push(m);
+  };
+  pushModel(primaryModel);
+  if (!opts.model) {
+    for (const f of (process.env.OPENROUTER_FALLBACK_MODELS ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {
+      if (plan.length >= 4) break;
+      if (f !== primaryModel) pushModel(f);
+    }
+  }
+
+  let lastErr: unknown = new Error("stream failed");
+  for (const [attempt, model] of plan.entries()) {
+    if (opts.signal?.aborted) throw new Error("OPENROUTER_ABORTED");
+    if (attempt > 0) await sleep(backoffMs(attempt - 1));
+    const started = Date.now();
+    try {
+      const res = await fetch(OPENROUTER_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${key}`,
+          "HTTP-Referer": process.env.OPENROUTER_SITE_URL ?? "https://gravity.matrka.net",
+          "X-Title": "GRAVITY",
+        },
+        body: JSON.stringify({
+          model,
+          messages: buildChatMessages(opts),
+          temperature: opts.temperature ?? 0.4,
+          max_tokens: opts.maxTokens ?? 768,
+          ...(opts.json ? { response_format: { type: "json_object" } } : {}),
+          stream: true,
+        }),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 45_000),
+      });
+      if (!res.ok || !res.body) {
+        const errText = await res.text().catch(() => "");
+        const err = new Error(`OpenRouter ${res.status}: ${errText.slice(0, 200)}`);
+        if (retryable(res.status)) {
+          lastErr = err;
+          continue;
+        }
+        throw err;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let text = "";
+      let served = model;
+      try {
+        for (;;) {
+          if (opts.signal?.aborted) throw new Error("OPENROUTER_ABORTED");
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const data = trimmed.slice(5).trim();
+            if (data === "[DONE]") continue;
+            let event: { model?: string; choices?: { delta?: { content?: string } }[]; error?: { message?: string } };
+            try {
+              event = JSON.parse(data) as typeof event;
+            } catch {
+              continue;
+            }
+            if (event.error) throw new Error(`OpenRouter stream: ${event.error.message ?? "unknown"}`);
+            if (event.model) served = event.model;
+            const delta = event.choices?.[0]?.delta?.content;
+            if (delta) {
+              text += delta;
+              opts.onDelta(delta);
+            }
+          }
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
+      }
+      const finalText = text.trim();
+      if (!finalText) throw new Error("OPENROUTER_EMPTY_RESPONSE");
+      return {
+        text: finalText,
+        tokens: 0,
+        latencyMs: Date.now() - started,
+        model: served,
+        provider: "openrouter",
+        attempts: attempt + 1,
+      };
+    } catch (err) {
+      if (err instanceof Error && err.message === "OPENROUTER_ABORTED") throw err;
+      lastErr = err;
+      if (err instanceof Error && !retryable(Number(/(\d{3})/.exec(err.message)?.[1] ?? 0))) {
+        // Non-transient (auth, bad request, abort-shaped) — stop immediately.
+        if (/OPENROUTER_ABORTED|API_KEY_MISSING|EMPTY_RESPONSE/.test(err.message)) throw err;
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 async function callOllama(opts: LLMOpts): Promise<LLMResult> {

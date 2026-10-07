@@ -18,6 +18,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { TaskComposer } from "@/components/studio/TaskComposer";
 import type { CsvFile } from "@/components/studio/TaskComposer";
+import { ChatThread } from "@/components/studio/ChatThread";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { MissionRun } from "@/components/studio/MissionRun";
 import { RightSideVisualField } from "@/components/gravity/RightSideVisualField";
@@ -116,6 +117,7 @@ function HomeContent() {
   );
   const [authOpen, setAuthOpen] = React.useState(false);
   const [pendingRun, setPendingRun] = React.useState<{ prompt: string; files?: CsvFile[]; imageModel?: string } | null>(null);
+  const [mode, setMode] = React.useState<"mission" | "chat">("mission");
 
   React.useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => setIsAuthed(Boolean(user)));
@@ -279,18 +281,46 @@ function HomeContent() {
           </div>
 
           <div ref={composerRef} className="studio-hero-composer scroll-mt-24">
-            <TaskComposer
-              key={prefill || "fresh"}
-              initialValue={prefill}
-              busy={busy}
-              autoFocus={focusComposer}
-              onSubmit={submit}
-            />
-            {submitError ? (
-              <p className="mt-3 border border-danger/30 bg-danger/5 px-4 py-2 text-xs text-[color:var(--color-danger-text)]">
-                {submitError}
-              </p>
-            ) : null}
+            <div className="mb-3 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setMode("mission")}
+                className={mode === "mission" ? "studio-primary-button px-4 py-1.5" : "studio-secondary-button px-4 py-1.5"}
+              >
+                Create
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("chat")}
+                className={mode === "chat" ? "studio-primary-button px-4 py-1.5" : "studio-secondary-button px-4 py-1.5"}
+              >
+                Chat
+              </button>
+              <span className="studio-meta hidden sm:inline">
+                {mode === "mission" ? "Heavy jobs — images, sites, data." : "Quick answers — streams like chat."}
+              </span>
+            </div>
+            {mode === "mission" ? (
+              <>
+                <TaskComposer
+                  key={prefill || "fresh"}
+                  initialValue={prefill}
+                  busy={busy}
+                  autoFocus={focusComposer}
+                  onSubmit={submit}
+                />
+                {submitError ? (
+                  <p className="mt-3 border border-danger/30 bg-danger/5 px-4 py-2 text-xs text-[color:var(--color-danger-text)]">
+                    {submitError}
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <ChatThread
+                authed={isAuthed}
+                onRequireAuth={() => setAuthOpen(true)}
+              />
+            )}
             <div className="mt-4 flex items-center gap-3">
               <span className="studio-meta">
                 Start with an intent. GRAVITY decides what kind of intelligence belongs behind it.
