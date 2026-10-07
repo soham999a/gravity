@@ -26,6 +26,7 @@ import {
 } from "@/components/studio/ResultPortal";
 import { ResultWindow } from "./ResultWindow";
 import { displayPrompt, stripDataMarkers } from "@/lib/gravity/promptText";
+import { downloadImageFile } from "@/lib/utils";
 
 interface MissionData {
   mission: {
@@ -852,15 +853,7 @@ function ResultSurface({
               <Download className="size-3.5" /> Export .md
             </button>
           ) : null}
-          {!parsedType ? (
-            <button
-              type="button"
-              className="studio-secondary-button"
-              onClick={() => downloadText(exportMd, "gravity-result.md")}
-            >
-              <Download className="size-3.5" /> Export .md
-            </button>
-          ) : null}
+          {/* Text results export via ResultWindow (Word + PDF + .md) — nothing to add here. */}
         </div>
       </div>
     </div>
@@ -1079,6 +1072,19 @@ function ImageResult({
           >
             Open full size
           </a>
+          <button
+            type="button"
+            className="studio-refine-toggle"
+            onClick={() =>
+              void downloadImageFile(
+                img.url,
+                `gravity-image-${i + 1}.${img.url.startsWith("data:image/png") ? "png" : "jpg"}`,
+              )
+            }
+            title="Download this image to disk"
+          >
+            ⤓ Download
+          </button>
           <button
             type="button"
             className="studio-refine-toggle"

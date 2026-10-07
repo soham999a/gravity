@@ -21,6 +21,7 @@ import {
   runPinnedBaselineTask,
   runJevTask,
   classDifficulty,
+  PINNED_CONFIG,
   JEV_WIRED,
 } from "./benchmarkAdapters";
 import { evaluateRecord, type EvalVerdict } from "./benchmarkEval";
@@ -281,6 +282,23 @@ export async function runBenchmark(options: RunnerOptions = {}): Promise<RunnerR
     workloadClasses: taskDefs.map((def) => def.id),
     runsPerClass,
     recordCount: records.length,
+    // Frozen decoding config — the onboarding spec's reproducibility core.
+    temperature: PINNED_CONFIG.TEMPERATURE,
+    maxTokens: PINNED_CONFIG.MAX_TOKENS,
+    models: Object.fromEntries(
+      systems.map((system) => [
+        system,
+        system === "GRAVITY" || system === "GRAVITY-STATIC"
+          ? (process.env.GEMINI_MODEL ?? "gemini-2.5-flash")
+          : system === "CLAUDE"
+            ? PINNED_CONFIG.CLAUDE_MODEL
+            : system === "OPENAI"
+              ? PINNED_CONFIG.OPENAI_MODEL
+              : system === "GRAVITY-OPENROUTER"
+                ? PINNED_CONFIG.OPENROUTER_MODEL
+                : null,
+      ]),
+    ) as BenchmarkRunManifest["models"],
   };
 
   return { manifest, records, aggregates: groupAggregates(records), skippedSystems };

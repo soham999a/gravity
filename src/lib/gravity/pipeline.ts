@@ -819,14 +819,13 @@ export async function executeMission(missionId: string): Promise<void> {
         console.warn("[pipeline] paid image failed, using free fallback:", paidError);
       }
 
-      const images = generateImageVariations(plan.imagePrompt, 2);
+      // Free variations exist ONLY as the paid-failure fallback: when the paid
+      // HD render succeeds the user gets exactly that one image, no free
+      // lookalikes attached. (Pollinations renders lazily on first request
+      // and burst-throttles fresh seeds with transient 402s — warm server-side
+      // so verification receives real bytes. Bounded by the run deadline.)
+      const images = paidImage ? [] : generateImageVariations(plan.imagePrompt, 2);
 
-      // Pollinations renders lazily on first request and burst-throttles
-      // fresh seeds with transient 402s — a cold URL shows as a broken/
-      // still-rendering image or an image_fetch_failed verification skip.
-      // Warm BOTH variations server-side now. The main one is awaited so
-      // verification receives real bytes; the second is fire-and-forget.
-      // Both are bounded by the run deadline (minus verify headroom).
       const warmNotAfter = deadlineAt - 15_000;
       if (paidImage) {
         await warmupImage(paidImage.url, { notAfter: warmNotAfter });
@@ -919,8 +918,8 @@ export async function executeMission(missionId: string): Promise<void> {
               try {
                 const { generatePaidImage: regenPaid } = await import("./imageOpenRouter");
                 const healed = await regenPaid(repairPrompt, {
-                  width: images[0]?.width,
-                  height: images[0]?.height,
+                  width: images[0]?.width ?? dims.width,
+                  height: images[0]?.height ?? dims.height,
                   runId: run.id,
                   model: picked,
                 });

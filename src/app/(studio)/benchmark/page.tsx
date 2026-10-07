@@ -46,10 +46,15 @@ interface RecordRow {
 interface Manifest {
   runId: string;
   seed: number;
+  taskVersion?: string;
   systems: string[];
+  workloadClasses?: string[];
   runsPerClass: number;
   recordCount: number;
   startedAt: string;
+  temperature?: number;
+  maxTokens?: number;
+  models?: Record<string, string | null>;
   persisted?: boolean;
 }
 
@@ -85,10 +90,13 @@ export default function BenchmarkPage() {
     () => new Set<ClassId>(["A", "B", "C", "D", "E"]),
   );
   const [runsPerClass, setRunsPerClass] = React.useState(1);
+  const [seed, setSeed] = React.useState(42);
   const [manifest, setManifest] = React.useState<Manifest | null>(null);
   const [aggregates, setAggregates] = React.useState<Aggregate[]>([]);
   const [records, setRecords] = React.useState<RecordRow[]>([]);
   const [groundTruth, setGroundTruth] = React.useState<GroundTruthRow[]>([]);
+  const [reproducibility, setReproducibility] = React.useState<string | null>(null);
+  const [taskSet, setTaskSet] = React.useState<string | null>(null);
   const [openrouterConfigured, setOpenrouterConfigured] = React.useState(false);
   const [deepseekConfigured, setDeepseekConfigured] = React.useState(false);
   const [pinnedConfig, setPinnedConfig] = React.useState<PinnedConfig | null>(null);
@@ -107,6 +115,8 @@ export default function BenchmarkPage() {
       setAggregates(data.aggregates ?? []);
       setRecords(data.records ?? []);
       setGroundTruth(data.groundTruth ?? []);
+      setReproducibility(typeof data.reproducibility === "string" ? data.reproducibility : null);
+      setTaskSet(typeof data.taskSet === "string" ? data.taskSet : null);
       setOpenrouterConfigured(Boolean(data.openrouterConfigured));
       setDeepseekConfigured(Boolean(data.deepseekConfigured));
       setPinnedConfig(data.pinnedConfig ?? null);
@@ -140,6 +150,9 @@ export default function BenchmarkPage() {
 
   const comboCount = selected.size * selectedClasses.size * runsPerClass;
 
+  const selectAllRunnable = () =>
+    setSelected(new Set(SYSTEMS.filter((s) => !s.disabled).map((s) => s.id)));
+
   const runBenchmark = React.useCallback(async () => {
     if (selected.size === 0 || selectedClasses.size === 0 || phase === "running") return;
     if (comboCount > 30) {
@@ -159,7 +172,7 @@ export default function BenchmarkPage() {
           systems: [...selected],
           classes: [...selectedClasses],
           runsPerClass,
-          seed: 42,
+          seed,
         }),
       });
       const data = await res.json();
@@ -173,7 +186,7 @@ export default function BenchmarkPage() {
       setPhase("error");
       setError(err instanceof Error ? err.message : "benchmark run failed");
     }
-  }, [selected, selectedClasses, runsPerClass, phase, comboCount]);
+  }, [selected, selectedClasses, runsPerClass, seed, phase, comboCount]);
 
   const systemOrder = SYSTEMS.map((s) => s.id);
   const classOrder = ["A", "B", "C", "D", "E"];
@@ -283,6 +296,13 @@ export default function BenchmarkPage() {
         >
           {phase === "running" ? "RUNNING…" : `RUN ${selected.size} SYSTEM${selected.size === 1 ? "" : "S"} × ${selectedClasses.size} CLASS${selectedClasses.size === 1 ? "" : "ES"}`}
         </button>
+        <button
+          type="button"
+          onClick={selectAllRunnable}
+          className="meta text-gold underline decoration-gold-dim underline-offset-4"
+        >
+          SELECT ALL RUNNABLE
+        </button>
         <label className="meta flex items-center gap-2">
           runs / class
           <select
@@ -296,6 +316,15 @@ export default function BenchmarkPage() {
               </option>
             ))}
           </select>
+        </label>
+        <label className="meta flex items-center gap-2">
+          seed
+          <input
+            type="number"
+            value={seed}
+            onChange={(event) => setSeed(Math.max(0, Math.floor(Number(event.target.value) || 0)))}
+            className="w-20 rounded border border-border bg-surface px-2 py-1 text-ivory"
+          />
         </label>
         {manifest ? (
           <a
@@ -322,14 +351,34 @@ export default function BenchmarkPage() {
         </section>
         ) : null}
 
-      {/* ── Manifest ── */}
+      {/* ── Manifest + frozen config (onboarding: freeze everything, hash it) ── */}
       {manifest ? (
-        <section className="meta flex flex-wrap gap-x-6 gap-y-1 text-ivory-faint">
-          <span>run {manifest.runId}</span>
-          <span>seed {manifest.seed}</span>
-          <span>{manifest.recordCount} records</span>
-          <span>runs/class {manifest.runsPerClass}</span>
-          {manifest.persisted === true ? <span>· persisted to Firestore</span> : manifest.persisted === false ? <span>· in-memory (Firestore unavailable)</span> : null}
+        <section className="space-y-3 rounded-lg border border-border bg-surface p-4">
+          <div className="meta flex flex-wrap gap-x-6 gap-y-1 text-ivory-faint">
+            <span>run {manifest.runId}</span>
+            <span>seed {manifest.seed}</span>
+            {manifest.taskVersion ? <span>tasks {manifest.taskVersion}</span> : taskSet ? <span>tasks {taskSet}</span> : null}
+            <span>{manifest.recordCount} records</span>
+            <span>runs/class {manifest.runsPerClass}</span>
+            {manifest.temperature !== undefined ? <span>temp {manifest.temperature}</span> : null}
+            {manifest.maxTokens !== undefined ? <span>max {manifest.maxTokens} tok</span> : null}
+            {manifest.persisted === true ? <span>· persisted to Firestore</span> : manifest.persisted === false ? <span>· in-memory (Firestore unavailable)</span> : null}
+          </div>
+          {manifest.models ? (
+            <div className="meta flex flex-wrap gap-x-6 gap-y-1 text-ivory-faint">
+              {Object.entries(manifest.models).map(([system, model]) => (
+                <span key={system}>
+                  {system}: {model ?? "n/a (not wired)"}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {reproducibility ? (
+            <p className="text-xs leading-relaxed text-ivory-faint">
+              <span className="meta text-gold">REPRODUCIBILITY — </span>
+              {reproducibility}
+            </p>
+          ) : null}
         </section>
       ) : null}
 

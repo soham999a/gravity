@@ -133,9 +133,28 @@ export interface BenchmarkRunManifest {
   workloadClasses: WorkloadClass[];
   runsPerClass: number;
   recordCount: number;
+  /** Frozen decoding config (onboarding spec: freeze everything, hash it). */
+  temperature: number;
+  maxTokens: number;
+  /** Exact model slug per system — null where the system has no model (JEV). */
+  models: Partial<Record<BenchmarkSystem, string | null>>;
 }
 
-export const TASK_VERSION = "workload-classes-v2";
+export const TASK_VERSION = "workload-classes-v3";
+
+/**
+ * Honest reproducibility statement (onboarding acceptance #6), shared by the
+ * API and the Lab UI so both say the same thing. temp 0 removes sampling
+ * variance but providers still vary (routing, batching, nondeterministic
+ * kernels) — same taskVersion + same configHash + same code = comparable,
+ * never bit-identical. Timestamps are excluded from comparability.
+ */
+export const REPRODUCIBILITY_NOTE =
+  "Frozen per run: task prompts, model slugs, temperature 0, max tokens, system set, " +
+  "classes, runs/class, seed, and task version — each record carries a configHash over " +
+  "system|model|temperature|maxTokens|prompt. Temperature 0 removes sampling variance but " +
+  "providers still vary run to run, so reruns are comparable, not bit-identical. " +
+  "Compare only records with equal taskVersion and configHash; ignore timestamps.";
 
 /** Deterministic config fingerprint per the spec's "Configuration to Freeze"
  *  — SHA-256 over system|model|temperature|maxTokens|prompt, so any config

@@ -42,7 +42,9 @@ export const PINNED_CONFIG = {
   OPENAI_MODEL: process.env.BENCH_OPENAI_MODEL ?? "openai/gpt-oss-120b",
   /** Raw OpenRouter pin (no kernel) — $5 pay-as-you-go workhorse. */
   OPENROUTER_MODEL: process.env.OPENROUTER_MODEL ?? "deepseek/deepseek-v4.1-flash",
-  TEMPERATURE: 0.7,
+  /** Deterministic decoding per the onboarding spec (was 0.7 — sampling
+   *  variance is the enemy of a defensible benchmark). */
+  TEMPERATURE: 0,
   MAX_TOKENS: 2048,
 } as const;
 

@@ -14,6 +14,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { AutoCharts, EngineTrace, SectionedBrief, type TraceNode } from "./ResultPortal";
+import { downloadBlob, downloadDocFile, printPdfFile } from "@/lib/utils";
 
 /* ===========================================================================
    RESULT WINDOW — the full-width result surface.
@@ -476,15 +477,28 @@ export function ResultWindow({
               {copied ? "Copied" : "Copy result"}
             </button>
             <button type="button" className="studio-secondary-button" onClick={() => {
-              const blob = new Blob([exportMd], { type: "text/markdown;charset=utf-8" });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = "gravity-result.md";
-              a.click();
-              URL.revokeObjectURL(url);
+              downloadBlob(
+                new Blob([exportMd], { type: "text/markdown;charset=utf-8" }),
+                "gravity-result.md",
+              );
             }}>
               <Download className="size-3.5" /> Export .md
+            </button>
+            <button
+              type="button"
+              className="studio-secondary-button"
+              onClick={() => downloadDocFile(title, exportMd)}
+              title="Word-compatible document — opens in MS Word / Google Docs"
+            >
+              <Download className="size-3.5" /> Export Word
+            </button>
+            <button
+              type="button"
+              className="studio-secondary-button"
+              onClick={() => printPdfFile(title, exportMd)}
+              title="Opens a clean print view — choose Save as PDF"
+            >
+              <Download className="size-3.5" /> Export PDF
             </button>
             <UserControl strategies={strategies} onSimulate={onSimulate} />
           </div>

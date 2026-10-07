@@ -3,6 +3,7 @@ import { verifyAuthToken } from "@/lib/api-auth";
 import { runBenchmark, recordsToCsv, type RunnerProgress } from "@/lib/gravity/benchmarkRunner";
 import { GROUND_TRUTH } from "@/lib/gravity/benchmarkEval";
 import { PINNED_CONFIG, JEV_WIRED } from "@/lib/gravity/benchmarkAdapters";
+import { REPRODUCIBILITY_NOTE } from "@/lib/gravity/benchmarkTypes";
 import {
   getLatestBenchmark,
   saveBenchmarkRun,
@@ -41,6 +42,8 @@ export async function GET(request: Request) {
   const latest = await getLatestBenchmark();
   return NextResponse.json({
     ...latest,
+    taskSet: "workload-classes",
+    reproducibility: REPRODUCIBILITY_NOTE,
     groundTruth: Object.entries(GROUND_TRUTH).map(([classId, truth]) => ({
       classId,
       difficulty: truth.difficulty,
