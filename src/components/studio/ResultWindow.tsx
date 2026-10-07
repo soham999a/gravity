@@ -14,7 +14,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { AutoCharts, EngineTrace, SectionedBrief, type TraceNode } from "./ResultPortal";
-import { downloadBlob, downloadDocFile, printPdfFile } from "@/lib/utils";
+import { downloadBlob, printPdfFile } from "@/lib/utils";
+import { downloadDocxFile } from "@/lib/exportDocx";
 
 /* ===========================================================================
    RESULT WINDOW — the full-width result surface.
@@ -453,6 +454,26 @@ export function ResultWindow({
   const latencyMs = run?.totalLatencyMs ?? mission.totalLatencyMs ?? null;
   const completed = formatTime(mission.completedAt);
 
+  // Real .docx export (async OOXML build) with result metadata.
+  const [wordBusy, setWordBusy] = React.useState(false);
+  const exportWord = async () => {
+    if (wordBusy) return;
+    setWordBusy(true);
+    try {
+      await downloadDocxFile(title, exportMd, {
+        tokens: totalTokensUsed || null,
+        calls: completedCalls,
+        costUsd: run?.totalCost ?? null,
+        latencyMs,
+        workers: nodes.map((n) => n.name).filter(Boolean),
+        strategy: mission.selectedStrategy,
+        quality: evaluation?.qualityScore ?? null,
+      });
+    } finally {
+      setWordBusy(false);
+    }
+  };
+
   return (
     <div className="result-window">
       <header className="result-window-head">
@@ -487,10 +508,11 @@ export function ResultWindow({
             <button
               type="button"
               className="studio-secondary-button"
-              onClick={() => downloadDocFile(title, exportMd)}
-              title="Word-compatible document — opens in MS Word / Google Docs"
+              onClick={() => void exportWord()}
+              disabled={wordBusy}
+              title="Genuine Word document (.docx) — headings, lists, tables, page numbers"
             >
-              <Download className="size-3.5" /> Export Word
+              <Download className="size-3.5" /> {wordBusy ? "Building…" : "Export Word"}
             </button>
             <button
               type="button"
@@ -507,10 +529,12 @@ export function ResultWindow({
 
       <span className="result-window-kind">{resultKind}</span>
 
-      {/* Full-width output — the senior's primary ask. */}
+      {/* Portrait document — the senior's orientation ask: reads like the page it exports to. */}
       <div className="result-window-output">
-        <SectionedBrief markdown={output} />
-        <AutoCharts markdown={output} />
+        <div className="result-doc">
+          <SectionedBrief markdown={output} />
+          <AutoCharts markdown={output} />
+        </div>
       </div>
 
       {/* Horizontal containers BELOW the output. */}

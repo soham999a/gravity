@@ -4116,6 +4116,44 @@
   font-size: 10px;
 }
 
+/* ---- Simulator compare view ---- */
+.result-compare-wrap {
+  margin-top: 22px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 18px;
+}
+.result-compare-wrap-open .result-trace-chevron {
+  transform: rotate(180deg);
+}
+.result-compare {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-top: 14px;
+}
+@media (min-width: 900px) {
+  .result-compare {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.result-compare-col {
+  border: 1px solid var(--color-border);
+  background: var(--color-deep);
+  padding: 18px 20px;
+  min-width: 0;
+  animation: result-rise 0.45s ease both;
+}
+.result-compare-col .studio-eyebrow {
+  display: block;
+  margin-bottom: 8px;
+}
+.result-compare-title {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  color: var(--color-ivory);
+  margin-bottom: 12px;
+}
+
 /* ---- Sectioned brief ---- */
 .result-sections {
   margin-top: 24px;
@@ -4159,18 +4197,45 @@
 }
 
 /* ---- MarkdownLite ---- */
+.result-mdlite {
+  overflow-wrap: break-word;
+}
+.result-mdlite h1,
+.result-mdlite h2,
+.result-mdlite h3,
+.result-mdlite h4 {
+  font-family: var(--font-serif);
+  color: var(--color-ivory);
+  line-height: 1.35;
+  margin: 16px 0 8px;
+}
+.result-mdlite h1 {
+  font-size: 20px;
+}
+.result-mdlite h2 {
+  font-size: 17px;
+}
+.result-mdlite h3,
+.result-mdlite h4 {
+  font-size: 15px;
+}
 .result-mdlite p {
   margin: 0 0 10px;
 }
 .result-mdlite p:last-child {
   margin-bottom: 0;
 }
-.result-mdlite ul {
+.result-mdlite ul,
+.result-mdlite ol {
   margin: 6px 0 10px;
-  padding-left: 18px;
+  padding-left: 20px;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+.result-mdlite li > ul,
+.result-mdlite li > ol {
+  margin: 4px 0 2px;
 }
 .result-mdlite strong {
   color: var(--color-ivory);
@@ -4190,6 +4255,59 @@
 }
 .result-mdlite a:hover {
   color: var(--color-ivory);
+}
+.result-mdlite blockquote {
+  border-left: 2px solid var(--color-gold-dim);
+  margin: 8px 0 10px;
+  padding: 6px 14px;
+  color: var(--color-ivory-dim);
+}
+.result-mdlite blockquote p:last-child {
+  margin-bottom: 0;
+}
+.result-mdlite pre {
+  background: var(--color-void);
+  border: 1px solid var(--color-border);
+  padding: 12px 14px;
+  margin: 8px 0 12px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.result-mdlite pre code {
+  background: none;
+  padding: 0;
+}
+.result-mdlite hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 14px 0;
+}
+.result-mdlite-tablewrap {
+  overflow-x: auto;
+  margin: 8px 0 12px;
+}
+.result-mdlite table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12.5px;
+}
+.result-mdlite th,
+.result-mdlite td {
+  border: 1px solid var(--color-border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.result-mdlite th {
+  background: var(--color-gold-pale);
+  color: var(--color-ivory);
+  font-weight: 600;
+}
+.result-mdlite em {
+  color: var(--color-ivory-dim);
+}
+.result-mdlite input[type="checkbox"] {
+  accent-color: var(--color-gold);
 }
 
 /* ---- Auto charts ---- */
@@ -4581,6 +4699,31 @@
 }
 .result-window-output {
   margin-top: 0;
+}
+
+/* Portrait document orientation — the text result reads like the A4 page
+   it exports to (Word/PDF), centered at a comfortable measure. Metadata
+   panels below stay full-width. */
+.result-doc {
+  max-width: 780px;
+  margin: 22px auto 0;
+  background: var(--color-deep);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  padding: 44px 48px;
+  animation: result-rise 0.5s ease both;
+}
+.result-doc > .result-sections:first-child {
+  margin-top: 0;
+}
+.result-doc > .result-mdlite:first-child {
+  margin-top: 0;
+}
+@media (max-width: 640px) {
+  .result-doc {
+    margin-top: 16px;
+    padding: 26px 18px;
+  }
 }
 
 /* Verdict badge */

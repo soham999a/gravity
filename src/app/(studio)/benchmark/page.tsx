@@ -193,6 +193,28 @@ export default function BenchmarkPage() {
   const aggregateFor = (system: string, workloadClass: string) =>
     aggregates.find((a) => a.system === system && a.workloadClass === workloadClass) ?? null;
 
+  // Visual comparison: per-system means across classes (nulls excluded).
+  const systemSummary = systemOrder
+    .map((system) => {
+      const rows = classOrder
+        .map((c) => aggregateFor(system, c))
+        .filter((a) => a !== null);
+      if (rows.length === 0) return null;
+      const mean = (pick: (a: Aggregate) => number | null) => {
+        const vals = rows.map(pick).filter((v): v is number => v !== null);
+        return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+      };
+      return {
+        system,
+        success: mean((a) => a.taskSuccessRate),
+        tokens: mean((a) => a.avgTokensPerTask),
+        latency: mean((a) => a.p50LatencyMs),
+      };
+    })
+    .filter((s) => s !== null);
+  const maxTokens = Math.max(1, ...systemSummary.map((s) => s.tokens ?? 0));
+  const maxLatency = Math.max(1, ...systemSummary.map((s) => s.latency ?? 0));
+
   return (
     <div className="mx-auto w-full max-w-6xl space-y-10 px-6 py-10">
       {/* ── Header ── */}
@@ -379,6 +401,56 @@ export default function BenchmarkPage() {
               {reproducibility}
             </p>
           ) : null}
+        </section>
+      ) : null}
+
+      {/* ── Visual comparison: systems at a glance ── */}
+      {systemSummary.length > 0 ? (
+        <section className="space-y-4">
+          <p className="meta">VISUAL COMPARISON · MEAN ACROSS CLASSES</p>
+          <div className="grid gap-2">
+            {systemSummary.map((s) => (
+              <div key={s.system} className="rounded-lg border border-border bg-surface p-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-sm text-ivory">{s.system}</span>
+                  <span className="meta">
+                    {s.success === null ? "— success" : `${Math.round(s.success * 100)}% success`}
+                    {s.tokens !== null ? ` · ${fmt(s.tokens)} tok/task` : ""}
+                    {s.latency !== null ? ` · p50 ${fmt(s.latency)}ms` : ""}
+                  </span>
+                </div>
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center gap-3">
+                    <span className="meta w-16 shrink-0">SUCCESS</span>
+                    <div className="h-2 flex-1 rounded bg-border-light">
+                      <div
+                        className="h-2 rounded bg-gold"
+                        style={{ width: `${Math.round((s.success ?? 0) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="meta w-16 shrink-0">TOKENS</span>
+                    <div className="h-2 flex-1 rounded bg-border-light">
+                      <div
+                        className="h-2 rounded bg-ivory-faint"
+                        style={{ width: `${Math.max(2, Math.round(((s.tokens ?? 0) / maxTokens) * 100))}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="meta w-16 shrink-0">LATENCY</span>
+                    <div className="h-2 flex-1 rounded bg-border-light">
+                      <div
+                        className="h-2 rounded bg-ivory-faint"
+                        style={{ width: `${Math.max(2, Math.round(((s.latency ?? 0) / maxLatency) * 100))}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </section>
       ) : null}
 

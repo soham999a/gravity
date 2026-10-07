@@ -118,6 +118,8 @@ function HomeContent() {
   const [authOpen, setAuthOpen] = React.useState(false);
   const [pendingRun, setPendingRun] = React.useState<{ prompt: string; files?: CsvFile[]; imageModel?: string } | null>(null);
   const [mode, setMode] = React.useState<"mission" | "chat">("mission");
+  // Simulator pairs: original run ↔ forced-strategy re-run, for side-by-side compare.
+  const [simPairs, setSimPairs] = React.useState<{ original: string; simulated: string; strategy: string | null }[]>([]);
 
   React.useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => setIsAuthed(Boolean(user)));
@@ -231,17 +233,34 @@ function HomeContent() {
   // included) through a forced strategy and view the new run.
   const handleSimulate = async (strategy: string | null) => {
     if (!missionId) return;
+    const from = missionId;
     let original = "";
     try {
-      const res = await fetch(`/api/missions/${missionId}`, { cache: "no-store", credentials: "include" });
+      const res = await fetch(`/api/missions/${from}`, { cache: "no-store", credentials: "include" });
       if (res.ok) original = ((await res.json()) as { mission: { prompt: string } }).mission.prompt;
     } catch {
       /* no original — nothing to simulate */
     }
     if (!original) return;
     const id = await startMission(original, undefined, strategy);
+    setSimPairs((prev) => [...prev, { original: from, simulated: id, strategy }]);
     setThread((prev) => [...prev, { id, prompt: original }]);
     setMissionId(id);
+  };
+
+  // Compare wiring: whichever side of a simulator pair is on screen, the
+  // other side loads on demand inside MissionRun's compare panel.
+  const compareFor = (id: string | null) => {
+    if (!id) return null;
+    const pair = [...simPairs].reverse().find((p) => p.original === id || p.simulated === id);
+    if (!pair) return null;
+    const isSim = pair.simulated === id;
+    const simTag = `SIMULATION · ${pair.strategy ? pair.strategy.replaceAll("_", " · ") : "AUTO"}`;
+    return {
+      otherId: isSim ? pair.original : pair.simulated,
+      selfTag: isSim ? simTag : "ORIGINAL · KERNEL",
+      otherTag: isSim ? "ORIGINAL · KERNEL" : simTag,
+    };
   };
 
   const pickExample = (prompt: string) => {
@@ -385,6 +404,7 @@ function HomeContent() {
               onRetry={handleRetry}
               onStatus={(status) => updateLocalStatus(missionId, status)}
               onSimulate={handleSimulate}
+              compareWith={compareFor(missionId)}
             />
           </div>
         ) : null}

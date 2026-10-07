@@ -25,6 +25,7 @@ import {
   type TraceNode,
 } from "@/components/studio/ResultPortal";
 import { ResultWindow } from "./ResultWindow";
+import { ComparePanel, type CompareWith } from "./ComparePanel";
 import { displayPrompt, stripDataMarkers } from "@/lib/gravity/promptText";
 import { downloadImageFile } from "@/lib/utils";
 
@@ -118,6 +119,7 @@ export function MissionRun({
   onRetry,
   onStatus,
   onSimulate,
+  compareWith,
 }: {
   missionId: string;
   /** Runs a refinement as a brand-new task seeded with the original context. */
@@ -129,6 +131,8 @@ export function MissionRun({
   /** User Control simulation: re-runs this task through the given strategy
    *  (null = let the kernel decide again). */
   onSimulate?: (strategy: string | null) => Promise<void>;
+  /** Side-by-side compare against the run this was simulated from (or spawned). */
+  compareWith?: CompareWith | null;
 }) {
   const [data, setData] = React.useState<MissionData | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -576,6 +580,12 @@ export function MissionRun({
             {/* Text/data results render their own collapsible trace inside
                 ResultWindow; only image/website results need it here. */}
             {parsedType ? <EngineTrace nodes={traceNodes} /> : null}
+
+            <ComparePanel
+              selfTitle={titleFromPrompt(mission.prompt)}
+              selfOutput={outputText}
+              compareWith={compareWith}
+            />
 
             {onFollowUp ? (
               <div className="mt-9 border-t border-border pt-6">

@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import { ChevronDown } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 /* ===========================================================================
    GRAVITY result portal building blocks:
@@ -192,50 +194,31 @@ export function SectionedBrief({ markdown }: { markdown: string }) {
 }
 
 /* ---------------------------------------------------------------------------
-   MarkdownLite — inline markdown without importing the app-wide renderer
-   (keeps this module dependency-light and avoids circular imports).
+   MarkdownLite — full GitHub-flavored markdown via react-markdown (already
+   a dependency). Replaces the old hand-rolled inline parser so nested
+   lists, tables, task lists, strikethrough and fenced code all render.
    --------------------------------------------------------------------------- */
 export function MarkdownLite({ children }: { children: string }) {
-  const html = React.useMemo(() => {
-    const esc = (s: string) =>
-      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    let out = esc(children);
-    // bold / italics
-    out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    out = out.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s.,;:)?!]|$)/g, "$1<em>$2</em>");
-    // inline code
-    out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
-    // bare urls
-    out = out.replace(
-      /(https?:\/\/[^\s<>"')]+)/g,
-      '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>',
-    );
-    // lists — bullets tolerate indentation ("  * Evidence: …") so model
-    // output never leaks raw asterisks, and numbered runs become <ol>.
-    out = out.replace(/(^|\n)[ \t]*((?:[-*+]\s+[^\n]+\n?)+)/g, (_m, p1, block: string) => {
-      const items = block
-        .trim()
-        .split("\n")
-        .map((l) => l.replace(/^\s*[-*+]\s*/, "").trim())
-        .filter(Boolean);
-      return `${p1}<ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul>`;
-    });
-    out = out.replace(/(^|\n)[ \t]*((?:\d{1,2}[.)]\s+[^\n]+\n?)+)/g, (_m, p1, block: string) => {
-      const items = block
-        .trim()
-        .split("\n")
-        .map((l) => l.replace(/^\s*\d{1,2}[.)]\s*/, "").trim())
-        .filter(Boolean);
-      return `${p1}<ol>${items.map((i) => `<li>${i}</li>`).join("")}</ol>`;
-    });
-    // paragraphs
-    out = out
-      .split(/\n{2,}/)
-      .map((p) => (p.trim() ? `<p>${p.trim().replace(/\n/g, "<br/>")}</p>` : ""))
-      .join("");
-    return out;
-  }, [children]);
-  return <div className="result-mdlite" dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    <div className="result-mdlite">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ node: _node, ...props }) => (
+            // eslint-disable-next-line jsx-a11y/anchor-has-content
+            <a {...props} target="_blank" rel="noopener noreferrer" />
+          ),
+          table: ({ node: _node, ...props }) => (
+            <div className="result-mdlite-tablewrap">
+              <table {...props} />
+            </div>
+          ),
+        }}
+      >
+        {children}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 /* ---------------------------------------------------------------------------
