@@ -62,6 +62,8 @@ function getAdminAuth(): Auth {
 /**
  * Upload buffer → hosted URL for paid image generations (OpenRouter returns
  * base64 bytes, but the pipeline + verifier + UI all speak URLs).
+ * Tries the configured bucket, then both Firebase bucket suffixes — a wrong
+ * bucket name must not silently downgrade paid renders to free.
  * Throws when Storage is unavailable — callers fall back to Pollinations.
  */
 export async function uploadImageBuffer(
@@ -72,15 +74,32 @@ export async function uploadImageBuffer(
   const app = getAdminApp();
   if (!app) throw new Error("Firebase Admin not configured — cannot upload image");
   const { getStorage } = await import("firebase-admin/storage");
-  const bucket = getStorage(app).bucket();
-  const file = bucket.file(dest);
-  await file.save(buffer, { metadata: { contentType } });
-  // Signed URL (30 days) — works without making the bucket public.
-  const [url] = await file.getSignedUrl({
-    action: "read",
-    expires: Date.now() + 30 * 24 * 3600 * 1000,
-  });
-  return url;
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const candidates = [
+    process.env.FIREBASE_STORAGE_BUCKET,
+    app.options?.storageBucket as string | undefined,
+    projectId ? `${projectId}.firebasestorage.app` : undefined,
+    projectId ? `${projectId}.appspot.com` : undefined,
+  ].filter((b): b is string => Boolean(b));
+  const tried = [...new Set(candidates)];
+  let lastErr: unknown = null;
+  for (const bucketName of tried) {
+    try {
+      const bucket = getStorage(app).bucket(bucketName);
+      const file = bucket.file(dest);
+      await file.save(buffer, { metadata: { contentType } });
+      // Signed URL (30 days) — works without making the bucket public.
+      const [url] = await file.getSignedUrl({
+        action: "read",
+        expires: Date.now() + 30 * 24 * 3600 * 1000,
+      });
+      return url;
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[firebase-admin] upload to ${bucketName} failed, trying next:`, String(err).slice(0, 140));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("all Storage buckets failed");
 }
 
 // Proxy exports so existing imports work: adminDb.collection(...), adminAuth.verifyIdToken(...)

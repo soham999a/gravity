@@ -32,6 +32,8 @@ export interface PaidImageResult {
   height: number;
   model: string;
   costUsd: number | null;
+  /** true = Firestore-persisted JPEG data-URL (no Storage bucket needed). */
+  inline: boolean;
 }
 
 function paidModel(requested?: ImageModelId): string | null {
@@ -57,9 +59,10 @@ interface ImagesResponse {
 }
 
 /**
- * Generate ONE HD image. Minimal body ({model, prompt}) — extra params vary
- * per endpoint and a wrong one 400s, so aspect/size ride along only as
- * prompt hints (the planner already bakes composition into the prompt).
+ * Generate ONE HD image. Tiered body: first with `aspect_ratio` (posters get
+ * portrait, banners get wide — without this every paid render comes back
+ * square 1:1 regardless of intent), retry minimal on 400 since extra params
+ * vary per endpoint and a wrong one 400s.
  * Throws on any failure (auth, balance, render) — caller uses free fallback.
  */
 export async function generatePaidImage(
@@ -72,28 +75,41 @@ export async function generatePaidImage(
 
   const width = opts?.width ?? 1024;
   const height = opts?.height ?? 1024;
-  void aspectFor(width, height);
+  const bodies: Record<string, unknown>[] = [
+    { model, prompt: prompt.slice(0, 1000), aspect_ratio: aspectFor(width, height) },
+    { model, prompt: prompt.slice(0, 1000) },
+  ];
 
-  const res = await fetch(IMAGES_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": process.env.OPENROUTER_SITE_URL ?? "https://gravity.matrka.net",
-      "X-Title": "GRAVITY",
-    },
-    body: JSON.stringify({ model, prompt: prompt.slice(0, 1000) }),
-    signal: AbortSignal.timeout(90_000),
-  });
+  let res: Response | null = null;
+  for (const body of bodies) {
+    res = await fetch(IMAGES_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.OPENROUTER_SITE_URL ?? "https://gravity.matrka.net",
+        "X-Title": "GRAVITY",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(90_000),
+    });
+    if (res.ok) break;
+    // Endpoint rejected the extra param — retry minimal before giving up.
+    if (res.status === 400 && body !== bodies[bodies.length - 1]) {
+      console.warn("[paid-image] aspect_ratio rejected, retrying minimal body");
+      continue;
+    }
+    break;
+  }
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    if (res.status === 402) {
+  if (!res || !res.ok) {
+    const errText = res ? await res.text().catch(() => "") : "";
+    if (res?.status === 402) {
       throw new Error(
         `OpenRouter balance ≤$1 pre-auth — top up at openrouter.ai/credits (actual image ~$0.02-0.08). ${errText.slice(0, 120)}`,
       );
     }
-    throw new Error(`OpenRouter image ${res.status}: ${errText.slice(0, 200)}`);
+    throw new Error(`OpenRouter image ${res?.status ?? "network"}: ${errText.slice(0, 200)}`);
   }
 
   const data = (await res.json()) as ImagesResponse;
@@ -103,16 +119,27 @@ export async function generatePaidImage(
 
   // Some endpoints return a hosted URL directly — use it, no upload needed.
   if (first?.url) {
-    return { url: first.url, prompt, width, height, model, costUsd };
+    return { url: first.url, prompt, width, height, model, costUsd, inline: false };
   }
   if (!first?.b64_json) throw new Error("OpenRouter image: empty response (no b64_json/url)");
 
   const buffer = Buffer.from(first.b64_json, "base64");
   if (buffer.length < 1_000) throw new Error("OpenRouter image: suspiciously small payload");
 
-  const { uploadImageBuffer } = await import("@/lib/firebase-admin");
-  const stamp = Date.now().toString(36);
-  const dest = `gravity-images/${opts?.runId ?? "adhoc"}/${stamp}.png`;
-  const url = await uploadImageBuffer(buffer, dest, "image/png");
-  return { url, prompt, width, height, model, costUsd };
+  // Firestore-only persistence (no Storage bucket in this project):
+  // 1) try a hosted Storage URL (works if a bucket ever gets enabled),
+  // 2) else squeeze to a Firestore-safe inline JPEG data-URL.
+  try {
+    const { uploadImageBuffer } = await import("@/lib/firebase-admin");
+    const stamp = Date.now().toString(36);
+    const dest = `gravity-images/${opts?.runId ?? "adhoc"}/${stamp}.png`;
+    const url = await uploadImageBuffer(buffer, dest, "image/png");
+    return { url, prompt, width, height, model, costUsd, inline: false };
+  } catch (storageErr) {
+    console.warn("[paid-image] Storage upload failed, inlining JPEG:", String(storageErr).slice(0, 140));
+  }
+  const { toFirestoreImage } = await import("./imageInline");
+  const inline = toFirestoreImage(buffer);
+  console.log(`[paid-image] inline JPEG q${inline.quality} ${(inline.bytes / 1024).toFixed(0)}KB (Firestore-safe)`);
+  return { url: inline.dataUrl, prompt, width, height, model, costUsd, inline: true };
 }

@@ -796,12 +796,14 @@ export async function executeMission(missionId: string): Promise<void> {
       // ── PAID PRIMARY ($5 OpenRouter) → FREE FALLBACK (Pollinations) ───
       // Best result first: 1 HD paid render. Any paid failure (no key, ≤$1
       // balance, render error, Storage upload error) degrades to the free
-      // path — paid is strictly an upgrade, never a breakage.
+      // path — paid is strictly an upgrade, never a breakage. The failure
+      // reason rides along in paidError so the UI can show WHY free was used.
       let paidImage: { url: string; model: string; costUsd: number | null } | null = null;
+      let paidError: string | null = null;
       const dims = inferDimensions(plan.imagePrompt);
+      const picked = normalizeImageModel((mission as { imageModel?: string | null }).imageModel ?? "auto");
       try {
         const { generatePaidImage } = await import("./imageOpenRouter");
-        const picked = normalizeImageModel((mission as { imageModel?: string | null }).imageModel ?? "auto");
         if (picked !== "free") {
           const paid = await generatePaidImage(plan.imagePrompt, {
             width: dims.width,
@@ -810,9 +812,11 @@ export async function executeMission(missionId: string): Promise<void> {
             model: picked,
           });
           paidImage = { url: paid.url, model: paid.model, costUsd: paid.costUsd };
+          console.log(`[pipeline] paid image OK: ${paid.model} $${paid.costUsd ?? "?"} aspect=${dims.width}x${dims.height}`);
         }
       } catch (err) {
-        console.warn("[pipeline] paid image failed, using free fallback:", String(err).slice(0, 160));
+        paidError = String(err instanceof Error ? err.message : err).slice(0, 200);
+        console.warn("[pipeline] paid image failed, using free fallback:", paidError);
       }
 
       const images = generateImageVariations(plan.imagePrompt, 2);
@@ -852,7 +856,7 @@ export async function executeMission(missionId: string): Promise<void> {
         name: "Image Generation",
         type: "image_generation",
         stage: "L1 · Generate",
-        purpose: `Generate ${imgItems.length} image(s) from: "${cleanPrompt.slice(0, 80)}"${plan.enhanced ? " · planned by jury LLM" : ""}${paidImage ? ` · HD paid ${paidImage.model} ($${paidImage.costUsd ?? "?"})` : " · free tier"}`,
+        purpose: `Generate ${imgItems.length} image(s) from: "${cleanPrompt.slice(0, 80)}"${plan.enhanced ? " · planned by jury LLM" : ""}${paidImage ? ` · HD paid ${paidImage.model} ($${paidImage.costUsd ?? "?"})` : ` · free tier${paidError ? ` (paid failed: ${paidError.slice(0, 100)})` : ""}`}`,
         prompt: plan.imagePrompt.slice(0, 500),
         outputOverride: JSON.stringify({
           type: "images",
@@ -861,6 +865,7 @@ export async function executeMission(missionId: string): Promise<void> {
           promptEnhanced: plan.enhanced,
           overlay: plan.overlay,
           paidImage: paidImage ?? null,
+          paidError,
         }),
       });
 
@@ -905,18 +910,46 @@ export async function executeMission(missionId: string): Promise<void> {
               plan.imagePrompt,
               verification!.feedback,
             );
-            const retry = generateImageURL(repairPrompt, {
-              seed: (images[0]?.seed ?? 0) + 1,
-              width: images[0]?.width,
-              height: images[0]?.height,
-            });
+            // Heal at the SAME tier that produced the original: a paid HD
+            // original must not be replaced by a free regen (downgrade).
+            // Paid heal costs one more image (~$0.04); free heal stays $0.
+            let retry: { url: string; prompt: string; width: number; height: number; seed?: number };
+            let healedPaid: { model: string; costUsd: number | null } | null = null;
+            if (paidImage && picked !== "free") {
+              try {
+                const { generatePaidImage: regenPaid } = await import("./imageOpenRouter");
+                const healed = await regenPaid(repairPrompt, {
+                  width: images[0]?.width,
+                  height: images[0]?.height,
+                  runId: run.id,
+                  model: picked,
+                });
+                retry = { url: healed.url, prompt: healed.prompt, width: healed.width, height: healed.height };
+                healedPaid = { model: healed.model, costUsd: healed.costUsd };
+              } catch (healErr) {
+                console.warn("[pipeline] paid self-heal failed, free heal:", String(healErr).slice(0, 120));
+                const free = generateImageURL(repairPrompt, {
+                  seed: (images[0]?.seed ?? 0) + 1,
+                  width: images[0]?.width,
+                  height: images[0]?.height,
+                });
+                retry = { url: free.url, prompt: free.prompt, width: free.width, height: free.height, seed: free.seed };
+              }
+            } else {
+              const free = generateImageURL(repairPrompt, {
+                seed: (images[0]?.seed ?? 0) + 1,
+                width: images[0]?.width,
+                height: images[0]?.height,
+              });
+              retry = { url: free.url, prompt: free.prompt, width: free.width, height: free.height, seed: free.seed };
+            }
 
             await executeNode({
               runId: run.id,
               name: "Self-Heal Regeneration",
               type: "image_generation",
               stage: "L1 · Generate",
-              purpose: `Vision jury reported MISMATCH — regenerating once with the defect folded in: "${verification!.feedback.slice(0, 140)}"`,
+              purpose: `Vision jury reported MISMATCH — regenerating once with the defect folded in: "${verification!.feedback.slice(0, 140)}"${healedPaid ? ` · paid ${healedPaid.model}` : ""}`,
               prompt: repairPrompt.slice(0, 500),
               outputOverride: JSON.stringify({
                 type: "images",
@@ -947,6 +980,7 @@ export async function executeMission(missionId: string): Promise<void> {
                 { url: retry.url, prompt: retry.prompt, width: retry.width, height: retry.height, seed: retry.seed },
                 ...imgItems.slice(1),
               ];
+              if (healedPaid) paidImage = { url: retry.url, model: healedPaid.model, costUsd: healedPaid.costUsd };
               verification = recheck;
               selfHealed = true;
             }
@@ -976,6 +1010,8 @@ export async function executeMission(missionId: string): Promise<void> {
         promptEnhanced: plan.enhanced,
         overlay: plan.overlay,
         selfHealed,
+        paidImage: paidImage ?? null,
+        paidError,
         verification: verification
           ? {
               verified: verification.verified,

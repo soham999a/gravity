@@ -14,9 +14,11 @@
         "drizzle-orm": "^0.45.2",
         "firebase": "^12.18.0",
         "firebase-admin": "^12.7.0",
+        "jpeg-js": "^0.4.4",
         "lucide-react": "^1.33.0",
         "next": "16.3.1",
         "papaparse": "^5.7.0",
+        "pngjs": "^7.0.0",
         "postgres": "^3.4.9",
         "react": "19.2.8",
         "react-dom": "19.2.8",
@@ -940,6 +942,8 @@
 
     "jose": ["jose@5.10.0", "", {}, "sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg=="],
 
+    "jpeg-js": ["jpeg-js@0.4.4", "", {}, "sha512-WZzeDOEtTOBK4Mdsar0IqEU5sMr3vSV2RqkAIzUEV2BHnUfKGyswWFPFwK5EeDo93K3FohSHbLAjj0s1Wzd+dg=="],
+
     "js-tokens": ["js-tokens@4.0.0", "", {}, ""],
 
     "js-yaml": ["js-yaml@4.3.1", "", { "dependencies": { "argparse": "^2.0.1" }, "bin": "bin/js-yaml.js" }, ""],
@@ -1213,6 +1217,8 @@
     "picocolors": ["picocolors@1.1.1", "", {}, ""],
 
     "picomatch": ["picomatch@4.0.5", "", {}, ""],
+
+    "pngjs": ["pngjs@7.0.0", "", {}, "sha512-LKWqWJRhstyYo9pGvgor/ivk2w94eSjE3RGVuzLGlr3NmD8bf7RcYGze1mNdEHRP6TRP6rMuDHk5t44hnTRyow=="],
 
     "possible-typed-array-names": ["possible-typed-array-names@1.1.0", "", {}, ""],
 
