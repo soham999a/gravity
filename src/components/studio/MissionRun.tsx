@@ -26,6 +26,7 @@ import {
 import { ResultWindow } from "./ResultWindow";
 import { ComparePanel, type CompareWith } from "./ComparePanel";
 import { displayPrompt, stripDataMarkers } from "@/lib/gravity/promptText";
+import { refreshSession } from "@/lib/auth-refresh";
 import { downloadImageFile } from "@/lib/utils";
 
 interface MissionData {
@@ -154,7 +155,16 @@ export function MissionRun({
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/missions/${missionId}`, { cache: "no-store", credentials: "include" });
+        let res = await fetch(`/api/missions/${missionId}`, { cache: "no-store", credentials: "include" });
+        if (res.status === 401) {
+          // Session cookie expired (Firebase rotates hourly; backgrounded
+          // tabs miss it) — heal once and retry instead of dropping to
+          // CONNECTION LOST and forcing a manual re-login.
+          const healed = await refreshSession();
+          if (healed) {
+            res = await fetch(`/api/missions/${missionId}`, { cache: "no-store", credentials: "include" });
+          }
+        }
         if (!res.ok) throw new Error(`Status ${res.status}`);
         const json = (await res.json()) as MissionData;
         if (cancelled) return;
@@ -303,21 +313,37 @@ export function MissionRun({
     Date.now() - Date.parse(mission.createdAt!) > 3 * 60_000;
   const activeIndex = STATUS_INDEX[mission.status] ?? 0;
 
-  // The run payload stores the real cause in node output (executeMission's
-  // catch writes String(err) into the node output). Surface it on RUN FAILED
-  // instead of the generic "provider hiccup or timeout" text. Store it here
-  // (not in JSX) so the live clock below does not dedent the formatted line.
-  const lastRun = nodes[0];
-  const rawRunError = lastRun?.output ?? null;
-  const runFailureReason = (
-    rawRunError
-      ? String(rawRunError)
-          .replace(/^Error: /, "")
-          .replace(/^[A-Z_]+: /, "")
-          .replace(/^\s+|\s+$/g, "")
-          .slice(0, 220)
-      : null
-  );
+  // The run payload stores the real cause in the FAILED node's output
+  // (executeMission's catch writes String(err) into the node output).
+  // Surface it on RUN FAILED instead of the generic "provider hiccup or
+  // timeout" text. Store it here (not in JSX) so the live clock below does
+  // not dedent the formatted line.
+  // NOTE: getExecutionNodes has no orderBy, so nodes[0] is an arbitrary
+  // worker — usually a SUCCESSFUL one. Reading nodes[0].output as the
+  // "reason" is what once rendered a whole results table after
+  // "The engine stopped because …". Only a failed node's output qualifies,
+  // and only when it looks like an error (short, single-line) rather than
+  // result markdown (tables, headings, bold titles).
+  const failedNode = nodes.find((n) => n.status === "failed") ?? null;
+  const rawRunError = failedNode?.output ?? null;
+  const runFailureReason = (() => {
+    if (!rawRunError) return null;
+    const firstLine =
+      String(rawRunError)
+        .split("\n")
+        .map((l) => l.trim())
+        .find((l) => l.length > 0) ?? "";
+    const cleaned = firstLine
+      .replace(/^Error: /, "")
+      .replace(/^[A-Z_]+: /, "")
+      .trim()
+      .slice(0, 220);
+    if (cleaned.length < 8) return null;
+    if (/^\|.+\|$/.test(cleaned)) return null;
+    if (/^#{1,6}\s/.test(cleaned)) return null;
+    if (/^\*\*.+\*\*$/.test(cleaned)) return null;
+    return cleaned;
+  })();
   const hasExplicitRunFailure = Boolean(runFailureReason && runFailureReason.length > 8);
   const failureReasonLabel = hasExplicitRunFailure
     ? runFailureReason

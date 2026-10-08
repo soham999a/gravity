@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { displayPrompt } from "./gravity/promptText";
+import { refreshSession } from "./auth-refresh";
 
 export interface MissionRow {
   id: string;
@@ -103,7 +104,16 @@ export function useMissionFeed() {
     let ok = false;
     let authError = false;
     try {
-      const res = await fetch("/api/missions", { cache: "no-store", credentials: "include" });
+      let res = await fetch("/api/missions", { cache: "no-store", credentials: "include" });
+      if (res.status === 401) {
+        // Hourly Firebase rotation missed (suspended tab) — heal the
+        // session once and retry instead of 401-spamming the console
+        // and degrading the feed to "no session".
+        const healed = await refreshSession();
+        if (healed) {
+          res = await fetch("/api/missions", { cache: "no-store", credentials: "include" });
+        }
+      }
       if (res.ok) {
         const json = (await res.json()) as { missions?: MissionRow[]; live?: boolean };
         api = json.missions ?? [];
