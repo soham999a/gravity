@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
-import { verifyAuthToken } from "@/lib/api-auth";
+import { verifyAuthToken, isStoreUnavailable, storeUnavailableResponse } from "@/lib/api-auth";
 import { executeMission } from "@/lib/gravity/pipeline";
 
 export const maxDuration = 60;
@@ -20,7 +20,13 @@ export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const ctx = await verifyAuthToken(_request as any);
+  let ctx;
+  try {
+    ctx = await verifyAuthToken(_request as any);
+  } catch (err) {
+    if (isStoreUnavailable(err)) return storeUnavailableResponse();
+    throw err;
+  }
   if (!ctx) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
 
   const { id } = await params;

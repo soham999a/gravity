@@ -114,6 +114,12 @@ export function useMissionFeed() {
           res = await fetch("/api/missions", { cache: "no-store", credentials: "include" });
         }
       }
+      if (!res.ok && res.status >= 500 && res.status <= 599) {
+        // Transient server blip — one delayed retry per tick so a cold
+        // start or brief store outage doesn't degrade the feed.
+        await new Promise((r) => setTimeout(r, 1500));
+        res = await fetch("/api/missions", { cache: "no-store", credentials: "include" });
+      }
       if (res.ok) {
         const json = (await res.json()) as { missions?: MissionRow[]; live?: boolean };
         api = json.missions ?? [];

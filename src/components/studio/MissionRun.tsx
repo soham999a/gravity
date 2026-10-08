@@ -165,6 +165,15 @@ export function MissionRun({
             res = await fetch(`/api/missions/${missionId}`, { cache: "no-store", credentials: "include" });
           }
         }
+        if (!res.ok && res.status >= 500 && res.status <= 599 && !cancelled) {
+          // Transient server blip (cold start, Firestore timeout under
+          // strict mode, 503 store outage) — one delayed retry per tick
+          // before surfacing CONNECTION LOST.
+          await new Promise((r) => setTimeout(r, 1500));
+          if (!cancelled) {
+            res = await fetch(`/api/missions/${missionId}`, { cache: "no-store", credentials: "include" });
+          }
+        }
         if (!res.ok) throw new Error(`Status ${res.status}`);
         const json = (await res.json()) as MissionData;
         if (cancelled) return;

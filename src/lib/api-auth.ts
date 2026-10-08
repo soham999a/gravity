@@ -11,12 +11,27 @@
 import { adminAuth, adminDb, isFirebaseReady } from "./firebase-admin";
 import { cachedTenant, dbAllowed, fs, storeTenant } from "./db-guard";
 import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
 export interface AuthContext {
   uid: string;
   email: string;
   name: string | null;
   tenantId: string;
+}
+
+/** True when verifyAuthToken threw because the token is fine but the
+ *  account store (Firestore) is unreachable. Routes map this to 503. */
+export function isStoreUnavailable(err: unknown): boolean {
+  return err instanceof Error && err.message === "AUTH_STORE_UNAVAILABLE";
+}
+
+/** 503 for store outages — retryable, must NOT trigger client re-login. */
+export function storeUnavailableResponse() {
+  return NextResponse.json(
+    { error: "account store temporarily unavailable — try again shortly", retryable: true },
+    { status: 503 },
+  );
 }
 
 const DEFAULT_TENANT = "default";
@@ -133,9 +148,18 @@ export async function verifyAuthToken(request: NextRequest): Promise<AuthContext
       uid = decoded.uid;
       email = decoded.email ?? "";
       name = decoded.name ?? null;
-      const tenantId = await getOrCreateUser(uid, email, name);
+      let tenantId: string;
+      try {
+        tenantId = await getOrCreateUser(uid, email, name);
+      } catch {
+        // Token is VALID but the account store (Firestore) is unreachable.
+        // This is a server outage, not a bad session — throw a typed error
+        // so routes answer 503 (retryable) instead of 401 (re-login).
+        throw new Error("AUTH_STORE_UNAVAILABLE");
+      }
       return { uid, email, name, tenantId };
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.message === "AUTH_STORE_UNAVAILABLE") throw err;
       // Fall through to path 2
     }
   }
@@ -150,6 +174,10 @@ export async function verifyAuthToken(request: NextRequest): Promise<AuthContext
   email = decoded.email;
   name = decoded.name;
 
-  const tenantId = await getOrCreateUser(uid, email, name);
-  return { uid, email, name, tenantId };
+  try {
+    const tenantId = await getOrCreateUser(uid, email, name);
+    return { uid, email, name, tenantId };
+  } catch {
+    throw new Error("AUTH_STORE_UNAVAILABLE");
+  }
 }

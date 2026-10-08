@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { verifyAuthToken } from "@/lib/api-auth";
+import { verifyAuthToken, isStoreUnavailable, storeUnavailableResponse } from "@/lib/api-auth";
 import { createMission, listMissions } from "@/lib/db-firestore";
 import { checkRateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { createMissionWithPlan, failStaleMissions } from "@/lib/gravity/pipeline";
@@ -18,7 +18,13 @@ interface CsvFile {
 
 export async function GET(request: Request) {
   try {
-    const ctx = await verifyAuthToken(request as any);
+    let ctx;
+    try {
+      ctx = await verifyAuthToken(request as any);
+    } catch (err) {
+      if (isStoreUnavailable(err)) return storeUnavailableResponse();
+      throw err;
+    }
     if (!ctx) {
       return NextResponse.json({ error: "unauthenticated", live: false }, { status: 401 });
     }
@@ -37,7 +43,13 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const ctx = await verifyAuthToken(request as any);
+    let ctx;
+    try {
+      ctx = await verifyAuthToken(request as any);
+    } catch (err) {
+      if (isStoreUnavailable(err)) return storeUnavailableResponse();
+      throw err;
+    }
     if (!ctx) {
       return NextResponse.json({ error: "unauthenticated", live: false }, { status: 401 });
     }
