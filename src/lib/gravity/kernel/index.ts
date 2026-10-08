@@ -229,7 +229,19 @@ export function routeStrategyAdaptive(
   const eligibleCatalog = catalog.filter((entry) =>
     eligibleStrategies.some((es) => es.strategy === entry.strategy),
   );
-  const routes = routesFromAllocation(allocation, eligibleCatalog);
+  // Creative-output routes are NEVER valid for non-creative tasks: without
+  // this gate a cold-start bandit gambles plain text requests on the website
+  // builder (prior 88) or image generation (prior 90) — the live "mountains
+  // list rendered as a blank website" bug. They stay reachable via the
+  // policy pin below when the intent flags are set.
+  const gatedCatalog = eligibleCatalog.filter((entry) =>
+    entry.strategy === "website_builder"
+      ? (profile.wantsWebsite ?? false)
+      : entry.strategy === "image_generation"
+        ? (profile.wantsImage ?? false)
+        : true,
+  );
+  const routes = routesFromAllocation(allocation, gatedCatalog);
   const fallbackRoutes: RouteCandidate[] = routes.length
     ? routes
     : [

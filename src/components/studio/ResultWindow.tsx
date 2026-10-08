@@ -14,8 +14,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { AutoCharts, EngineTrace, SectionedBrief, type TraceNode } from "./ResultPortal";
-import { downloadBlob, printPdfFile } from "@/lib/utils";
-import { downloadDocxFile } from "@/lib/exportDocx";
+import { downloadBlob } from "@/lib/utils";
+import { downloadDocxFile, normalizeMarkdown, resolveDocTitle, slugify } from "@/lib/exportDocx";
 
 /* ===========================================================================
    RESULT WINDOW — the full-width result surface.
@@ -388,7 +388,7 @@ function UserControl({
 /* --------------------------------------------------------------------------- */
 
 function CollapsibleTrace({ nodes }: { nodes: TraceNode[] }) {
-  const [open, setOpen] = React.useState(true);
+  const [open, setOpen] = React.useState(false);
   const usable = nodes.filter((n) => n.name || n.output);
   if (usable.length === 0) return null;
   return (
@@ -419,7 +419,6 @@ export function ResultWindow({
   completedCalls,
   copied,
   onCopy,
-  exportMd,
   strategies,
   onSimulate,
 }: {
@@ -434,7 +433,6 @@ export function ResultWindow({
   completedCalls: number;
   copied: boolean;
   onCopy: () => void;
-  exportMd: string;
   strategies: string[];
   onSimulate?: (strategy: string | null) => Promise<void>;
 }) {
@@ -454,23 +452,29 @@ export function ResultWindow({
   const latencyMs = run?.totalLatencyMs ?? mission.totalLatencyMs ?? null;
   const completed = formatTime(mission.completedAt);
 
-  // Real .docx export (async OOXML build) with result metadata.
+  // File exports contain ONLY the result (content-derived title + clean
+  // body). Metadata stays on screen, never inside the downloaded file.
+  const docTitle = resolveDocTitle(title, output);
+  const fileBody = `# ${docTitle}\n\n${normalizeMarkdown(output)}`;
   const [wordBusy, setWordBusy] = React.useState(false);
+  const [pdfBusy, setPdfBusy] = React.useState(false);
   const exportWord = async () => {
     if (wordBusy) return;
     setWordBusy(true);
     try {
-      await downloadDocxFile(title, exportMd, {
-        tokens: totalTokensUsed || null,
-        calls: completedCalls,
-        costUsd: run?.totalCost ?? null,
-        latencyMs,
-        workers: nodes.map((n) => n.name).filter(Boolean),
-        strategy: mission.selectedStrategy,
-        quality: evaluation?.qualityScore ?? null,
-      });
+      await downloadDocxFile(docTitle, output);
     } finally {
       setWordBusy(false);
+    }
+  };
+  const exportPdf = async () => {
+    if (pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      const { downloadPdfFile } = await import("@/lib/exportPdf");
+      await downloadPdfFile(docTitle, output);
+    } finally {
+      setPdfBusy(false);
     }
   };
 
@@ -499,8 +503,8 @@ export function ResultWindow({
             </button>
             <button type="button" className="studio-secondary-button" onClick={() => {
               downloadBlob(
-                new Blob([exportMd], { type: "text/markdown;charset=utf-8" }),
-                "gravity-result.md",
+                new Blob([fileBody], { type: "text/markdown;charset=utf-8" }),
+                `${slugify(docTitle)}.md`,
               );
             }}>
               <Download className="size-3.5" /> Export .md
@@ -517,10 +521,11 @@ export function ResultWindow({
             <button
               type="button"
               className="studio-secondary-button"
-              onClick={() => printPdfFile(title, exportMd)}
-              title="Opens a clean print view — choose Save as PDF"
+              onClick={() => void exportPdf()}
+              disabled={pdfBusy}
+              title="Real PDF file — downloads directly, no print dialog"
             >
-              <Download className="size-3.5" /> Export PDF
+              <Download className="size-3.5" /> {pdfBusy ? "Building…" : "Export PDF"}
             </button>
             <UserControl strategies={strategies} onSimulate={onSimulate} />
           </div>

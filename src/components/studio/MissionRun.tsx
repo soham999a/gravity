@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import {
   AutoCharts,
-  buildExportMarkdown,
   detectSeries,
   EngineTrace,
   HeroStatsStrip,
@@ -138,6 +137,9 @@ export function MissionRun({
   const [error, setError] = React.useState<string | null>(null);
   const [howOpen, setHowOpen] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
+  // Pipeline recap: expanded while working (feedback loop), auto-collapsed
+  // once the result lands so the page reads like one clean answer.
+  const [recapOpen, setRecapOpen] = React.useState(true);
   const [refinement, setRefinement] = React.useState("");
   const [followBusy, setFollowBusy] = React.useState(false);
   const [retryBusy, setRetryBusy] = React.useState(false);
@@ -184,8 +186,7 @@ export function MissionRun({
   // NOTE: all hooks must stay above every early return — otherwise React sees
   // a different hook order once `data` loads (Rules of Hooks).
   const missionCreatedAt = data?.mission.createdAt ?? null;
-  const missionStatus = data?.mission.status ?? null;
-  const [now, setNow] = React.useState(() => Date.now());
+  const missionStatus = data?.mission.status ?? null;  const [now, setNow] = React.useState(() => Date.now());
   React.useEffect(() => {
     if (!missionCreatedAt || !missionStatus || !ACTIVE.includes(missionStatus)) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -204,6 +205,13 @@ export function MissionRun({
     const hr = Math.floor(min / 60);
     return `${hr}h ${min % 60}m`;
   }, [missionCreatedAt, now]);
+
+  // Auto-collapse the pipeline recap once the mission settles (done/failed):
+  // while active it stays expanded as the feedback loop.
+  const missionActive = missionStatus ? ACTIVE.includes(missionStatus) : true;
+  React.useEffect(() => {
+    if (!missionActive) setRecapOpen(false);
+  }, [missionActive]);
 
   const copyOutput = async (text: string) => {
     try {
@@ -412,10 +420,6 @@ export function MissionRun({
         : chartSeries.length > 0
           ? "DATA"
           : "REPORT";
-  const overallQuality =
-    dimensions.length > 0
-      ? dimensions.reduce((a, d) => a + d.score, 0) / dimensions.length
-      : null;
   // Efficiency: qualityScore from the jury verdict (0..1). Media outputs are
   // graded by their verifier, NOT the text jury — compute path efficiency
   // directly (image gen is ~free: near-zero tokens → high efficiency).
@@ -424,14 +428,6 @@ export function MissionRun({
       ? Math.max(0.5, 1 - totalTokensUsed / 8000)
       : null;
   const overallQualityScore = evaluation?.qualityScore ?? null;
-  const exportMd = buildExportMarkdown({
-    title: titleFromPrompt(mission.prompt),
-    tokens: totalTokensUsed || null,
-    calls: completedCalls,
-    costUsd: data.run ? data.run.totalCost : null,
-    latencyMs: data.run?.totalLatencyMs ?? mission.totalLatencyMs,
-    workers: workerNames,
-    strategy: mission.selectedStrategy,    quality: overallQuality,    body: outputText,  });
 
   return (
     <>
@@ -503,7 +499,26 @@ export function MissionRun({
           </div>
         ) : null}
 
-        <div className="studio-workflow-line">
+        {/* Pipeline recap: the full machinery while running, one collapsed
+            line once the result lands — the page reads as one clean answer. */}
+        <div className={`studio-recap ${recapOpen || running ? "studio-recap-open" : ""}`}>
+          <button
+            type="button"
+            className="studio-recap-toggle"
+            onClick={() => setRecapOpen((v) => !v)}
+            aria-expanded={recapOpen || running}
+          >
+            <span className="studio-eyebrow">HOW IT RAN</span>
+            <span className="studio-meta">
+              {workerNames.length > 0 ? `${workerNames.length} workers · ` : ""}
+              {routing?.selectedStrategy ? routing.selectedStrategy.replaceAll("_", " · ") : "routing"}
+              {running ? " · working…" : ""}
+            </span>
+            <ChevronDown className="studio-recap-chevron" />
+          </button>
+          {recapOpen || running ? (
+            <>
+              <div className="studio-workflow-line">
           {STEPS.map((step, index) => {
             // While running, the active step spins. Once the mission is done,
             // EVERY step — including the final one — shows a check. Without the
@@ -550,6 +565,9 @@ export function MissionRun({
               ? `${routing.selectedStrategy.replaceAll("_", " · ")} — no unnecessary escalation`
               : "No unnecessary model escalation"}
           </span>
+              </div>
+            </>
+          ) : null}
         </div>
 
         {!running && !failed ? <HeroStatsStrip stats={heroStats} /> : null}
@@ -570,7 +588,6 @@ export function MissionRun({
               parsedType={parsedType}
               parsedData={parsedData}
               resultKind={resultKind}
-              exportMd={exportMd}
               efficiencyScore={mediaEfficiency ?? overallQualityScore}
               completedCalls={completedCalls}
               totalTokensUsed={totalTokensUsed}
@@ -667,7 +684,6 @@ function ResultSurface({
   parsedType,
   parsedData,
   resultKind,
-  exportMd,
   efficiencyScore,
   completedCalls,
   totalTokensUsed,
@@ -706,7 +722,6 @@ function ResultSurface({
     } | null;
   } | null;
   resultKind: string;
-  exportMd: string;
   efficiencyScore: number | null;
   completedCalls: number;
   totalTokensUsed: number;
@@ -743,7 +758,6 @@ function ResultSurface({
         completedCalls={completedCalls}
         copied={copied}
         onCopy={onCopy}
-        exportMd={exportMd}
         strategies={strategies}
         onSimulate={onSimulate}
       />

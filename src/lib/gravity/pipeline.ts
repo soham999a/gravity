@@ -1046,7 +1046,7 @@ export async function executeMission(missionId: string): Promise<void> {
         .replace(/\[DATA:csv[^\]]*\][\s\S]*?\[\/DATA\]\n*/g, "")
         .trim();
 
-      const siteResult = await generateWebsite(cleanPrompt, { maxTokens: 4500 });
+      const siteResult = await generateWebsite(cleanPrompt, { maxTokens: 8000 });
 
       await executeNode({
         runId: run.id,
@@ -1107,9 +1107,9 @@ export async function executeMission(missionId: string): Promise<void> {
         purpose: "Single focused pass on a compact model — best quality per token",
         tier: "small",
         system:
-          "You are a precise senior analyst. Deliver a direct, well-structured answer: short intro line, then bullets or numbered sections with concrete specifics. End with a one-line bottom-line recommendation. Never pad, never just list headings.",
+          "You are a precise senior analyst. Output ONLY the finished artifact the user asked for (the list, the content, the answer), starting directly with its '# Title' — never instructions about how to make it, never 'open Word' steps, never preamble. Short intro line only when it adds value, then the content with concrete specifics. Markdown hygiene: '# ' headings with a space, list markers ALWAYS followed by a space, real GFM tables for data.",
         prompt: mission.prompt,
-        maxTokens: 900,
+        maxTokens: 1600,
         deadlineAt,
       });
       finalOutput = r.output;
@@ -1122,7 +1122,7 @@ export async function executeMission(missionId: string): Promise<void> {
         purpose: "Deep single-domain investigation",
         tier: "general",
         system:
-          "You are a world-class domain specialist. Investigate the task rigorously and answer with concrete structure: findings, numbers where inferable, named trade-offs, actionable recommendations. Minimum 250 words. Never return headings alone.",
+          "You are a world-class domain specialist. Produce CONTENT for the final answer — the actual entries, facts, figures and descriptions — never instructions, never 'next steps', never tooling recommendations. Concrete structure, numbers where inferable. Minimum 250 words. Never return headings alone. Markdown hygiene: list markers ALWAYS followed by a space, real GFM tables for data.",
         prompt: mission.prompt,
         maxTokens: 1400,
         deadlineAt,
@@ -1152,7 +1152,7 @@ export async function executeMission(missionId: string): Promise<void> {
         purpose: "Decompose the mission into three specialist briefs",
         tier: "general",
         system:
-          'You are the Planner of an intelligence system. Reply ONLY with JSON: {"aspects":[{"title":"short specialist role","brief":"one-sentence investigation brief"}]} with exactly 3 aspects covering the most decision-relevant dimensions.',
+          'You are the Planner of an intelligence system. Reply ONLY with JSON: {"aspects":[{"title":"short specialist role","brief":"one-sentence investigation brief"}]} with exactly 3 aspects covering the most decision-relevant dimensions. Aspects investigate CONTENT for the final answer (facts, entries, figures, comparisons) — never process, formatting, tooling, or delivery-planning aspects.',
         prompt: mission.prompt,
         json: true,
         maxTokens: 420,
@@ -1184,7 +1184,7 @@ export async function executeMission(missionId: string): Promise<void> {
             stage: "L5 · Specialists",
             purpose: aspect.brief,
             tier: "general",
-            system: `You are a world-class specialist acting as "${aspect.title}". Deliver rigorous, specific analysis for your aspect: at least 250 words, concrete numbers where inferable, named trade-offs, actionable recommendations. Never return just headings.`,
+            system: `You are a world-class specialist acting as "${aspect.title}". Your job is to produce CONTENT for the final answer, not a plan about producing it. If the mission asks for a list, document, or file, write the actual entries, facts, figures and descriptions — never instructions, never "next steps", never tooling recommendations. At least 250 words, concrete numbers where inferable. Never return just headings.`,
             prompt: `Overall mission: ${mission.prompt}\nYour aspect: ${aspect.title} — ${aspect.brief}`,
             maxTokens: specBudget,
             deadlineAt,
@@ -1235,9 +1235,9 @@ export async function executeMission(missionId: string): Promise<void> {
         purpose: "Merge everything into the final decision-ready deliverable",
         tier: "general",
         system:
-          "You are the Synthesiser. Merge specialist analyses and the critic's notes into ONE decisive final answer. Structure: 1) Executive summary (≤3 sentences), 2) Key findings with numbers, 3) Trade-offs, 4) Concrete recommendation with next steps. Be specific; never mention the process or the agents.",
+          "You are the Synthesiser. Output ONLY the finished artifact the user asked for — the list, the content, the answer itself — starting directly with its title. BANNED: any sentence about how the deliverable 'will be' made, any 'Next steps' / 'Data collection' / 'Script development' section, any mention of tools, libraries, file formats, or the process/agents. If the mission asks for a ranked list or table, that table IS your answer: every row filled with real content. Analysis/decision missions (not deliverables) use: 1) Executive summary (≤3 sentences), 2) Key findings with numbers, 3) Trade-offs, 4) Concrete recommendation. Markdown hygiene (mandatory): '# ' headings with a space, list markers ALWAYS followed by a space ('1. item', '- item'), real GFM tables for tabular data, blank line before and after every list and table. Start directly with the document's '# Title' — no preamble like 'Content for your Word File' or 'Introduction:' meta-talk.",
         prompt: `Mission: ${mission.prompt}\n\n${specialistOutputs.join("\n\n")}${critiqueOutput ? `\n\nCritic notes:\n${critiqueOutput}` : ""}`,
-        maxTokens: 1800,
+        maxTokens: 3000,
         deadlineAt,
       });
       finalOutput = synthesis.output;
@@ -1281,12 +1281,45 @@ export async function executeMission(missionId: string): Promise<void> {
       /* plain text output */
     }
 
-    const wordCount = finalOutput.split(/\s+/).length;
+    let qualityScore = 0;
+    let dimensionScores: { name: string; score: number; delta?: number }[] = [];
+    let feedback = "";
+    let outputVerdict: "pass" | "review" | "fail" = "review";
 
-    let qualityScore: number;
-    let dimensionScores: { name: string; score: number; delta?: number }[];
-    let feedback: string;
-    let outputVerdict: "pass" | "review" | "fail";
+    // Text jury as a closure so a repair pass can re-grade without
+    // duplicating the judge/heuristic logic. Reads current finalOutput.
+    const judgeText = async (): Promise<void> => {
+      const wordCount = finalOutput.split(/\s+/).length;
+      const { judge, usedLlm } = await judgeOutput(mission.prompt, finalOutput);
+      if (judge) {
+        const efficiency = totalTokens > 0 ? Math.max(0.5, 1 - totalTokens / 8000) : 1;
+        qualityScore =
+          judge.accuracy * 0.35 +
+          judge.depth * 0.2 +
+          judge.clarity * 0.15 +
+          judge.actionability * 0.2 +
+          efficiency * 0.1;
+        dimensionScores = [
+          { name: "Accuracy", score: judge.accuracy },
+          { name: "Depth", score: judge.depth },
+          { name: "Clarity", score: judge.clarity },
+          { name: "Actionability", score: judge.actionability },
+          { name: "Efficiency", score: efficiency },
+        ];
+        feedback = `${judge.feedback} (${llmCalls} LLM calls · ${totalTokens} tokens · $0.00 spend${usedLlm ? " · graded by model jury" : ""})`;
+        outputVerdict = judge.verdict;
+      } else {
+        qualityScore = Math.min(0.95, 0.5 + Math.min(wordCount / 400, 0.35) + (llmCalls > 0 ? 0.1 : 0));
+        dimensionScores = [
+          { name: "Structure", score: /##|•|- |\d\./.test(finalOutput) ? 0.9 : 0.6 },
+          { name: "Depth", score: Math.min(wordCount / 300, 1) },
+          { name: "Efficiency", score: totalTokens > 0 ? Math.max(0.5, 1 - totalTokens / 8000) : 1 },
+          { name: "Cost efficiency", score: 1 },
+        ];
+        feedback = `${llmCalls} LLM call(s), ${totalTokens} tokens, $0.00 spend. Heuristic evaluation (judge unavailable).`;
+        outputVerdict = qualityScore >= 0.7 ? "pass" : "review";
+      }
+    };
 
     if (mediaKind === "images") {
       // Grade images ONLY on the vision verifier's measured verdict.
@@ -1334,34 +1367,36 @@ export async function executeMission(missionId: string): Promise<void> {
       feedback = `${llmCalls} LLM call(s), ${totalTokens} tokens. Site ${html.length.toLocaleString()} chars — structural check ${structural ? "passed" : "incomplete"}.`;
       outputVerdict = structural ? "pass" : "review";
     } else {
-      const { judge, usedLlm } = await judgeOutput(mission.prompt, finalOutput);
-      if (judge) {
-        const efficiency = totalTokens > 0 ? Math.max(0.5, 1 - totalTokens / 8000) : 1;
-        qualityScore =
-          judge.accuracy * 0.35 +
-          judge.depth * 0.2 +
-          judge.clarity * 0.15 +
-          judge.actionability * 0.2 +
-          efficiency * 0.1;
-        dimensionScores = [
-          { name: "Accuracy", score: judge.accuracy },
-          { name: "Depth", score: judge.depth },
-          { name: "Clarity", score: judge.clarity },
-          { name: "Actionability", score: judge.actionability },
-          { name: "Efficiency", score: efficiency },
-        ];
-        feedback = `${judge.feedback} (${llmCalls} LLM calls · ${totalTokens} tokens · $0.00 spend${usedLlm ? " · graded by model jury" : ""})`;
-        outputVerdict = judge.verdict;
-      } else {
-        qualityScore = Math.min(0.95, 0.5 + Math.min(wordCount / 400, 0.35) + (llmCalls > 0 ? 0.1 : 0));
-        dimensionScores = [
-          { name: "Structure", score: /##|•|- |\d\./.test(finalOutput) ? 0.9 : 0.6 },
-          { name: "Depth", score: Math.min(wordCount / 300, 1) },
-          { name: "Efficiency", score: totalTokens > 0 ? Math.max(0.5, 1 - totalTokens / 8000) : 1 },
-          { name: "Cost efficiency", score: 1 },
-        ];
-        feedback = `${llmCalls} LLM call(s), ${totalTokens} tokens, $0.00 spend. Heuristic evaluation (judge unavailable).`;
-        outputVerdict = qualityScore >= 0.7 ? "pass" : "review";
+      await judgeText();
+    }
+
+    // Self-repair: a "fail" verdict triggers ONE repair pass instead of
+    // serving a known-bad answer. Text strategies only, single attempt, and
+    // only with enough deadline left — the second verdict stands as-is.
+    // (String-typed read: TS can't see the closure assigned "fail".)
+    const firstVerdict: string = outputVerdict;
+    if (firstVerdict === "fail" && !mediaKind && Date.now() < deadlineAt - 25_000) {
+      try {
+        const repair = await executeNode({
+          runId: run.id,
+          name: "Repair Pass",
+          type: strategy,
+          stage: "Repair",
+          purpose: `Jury failed the first answer — one repair attempt: ${feedback.slice(0, 140)}`,
+          tier: "general",
+          system:
+            "You repair a failed answer. Output ONLY the corrected final artifact the user asked for (the list, the content, the answer), starting directly with its '# Title' — never instructions, never preamble, never process talk. Markdown hygiene: '# ' headings with a space, list markers ALWAYS followed by a space, real GFM tables for data.",
+          prompt: `Task: ${mission.prompt}\n\nFailed answer:\n${finalOutput.slice(0, 6000)}\n\nJury feedback: ${feedback}\n\nProduce the corrected final answer now.`,
+          maxTokens: 1600,
+          deadlineAt,
+        });
+        if (repair.output && repair.output.trim().length > 100) {
+          finalOutput = repair.output;
+          await judgeText();
+          feedback = `${feedback} (self-repaired after jury fail)`;
+        }
+      } catch (repairErr) {
+        console.warn("[pipeline] repair pass failed, serving original:", String(repairErr).slice(0, 140));
       }
     }
 

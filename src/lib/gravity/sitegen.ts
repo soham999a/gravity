@@ -69,8 +69,8 @@ export async function generateWebsite(
     tier: "general",
     system: SITE_SYSTEM_PROMPT,
     prompt: `Create a complete, production-ready website for:\n\n${prompt}\n\nReturn ONLY the raw HTML — nothing else.`,
-    maxTokens: options?.maxTokens ?? 4500,
-    timeoutMs: 35_000,
+    maxTokens: options?.maxTokens ?? 8000,
+    timeoutMs: 45_000,
   });
 
   const html = cleanHTML(result.text);
@@ -100,8 +100,8 @@ export async function refineWebsite(
       "\n\nYou are now refining an existing page. You receive the current HTML and modification instructions. " +
       "Return the COMPLETE modified HTML page — not just the changes.",
     prompt: `Current page HTML:\n${originalHtml.slice(0, 5000)}\n\n---\nModification: ${feedback}\n\nReturn the COMPLETE updated HTML page.`,
-    maxTokens: 4500,
-    timeoutMs: 35_000,
+    maxTokens: 8000,
+    timeoutMs: 45_000,
   });
 
   const html = cleanHTML(result.text);
@@ -121,6 +121,9 @@ function cleanHTML(raw: string): string {
 
   // Already a full document
   if (html.toLowerCase().includes("<!doctype") || html.toLowerCase().startsWith("<html")) {
+    // Truncated mid-stream by the token cap: close defensively so the iframe
+    // renders what arrived instead of a blank page.
+    if (!/<\/html>/i.test(html)) html += "\n</body>\n</html>";
     return html;
   }
 

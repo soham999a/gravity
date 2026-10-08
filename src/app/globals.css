@@ -4116,6 +4116,42 @@
   font-size: 10px;
 }
 
+/* ---- Pipeline recap (collapsed machinery once the result lands) ---- */
+.studio-recap {
+  margin-top: 22px;
+  border: 1px solid var(--color-border);
+  background: var(--color-deep);
+  padding: 12px 18px;
+}
+.studio-recap-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+.studio-recap-toggle .studio-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.studio-recap-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--color-muted-foreground);
+  transition: transform 0.25s ease;
+  flex-shrink: 0;
+}
+.studio-recap-open .studio-recap-chevron {
+  transform: rotate(180deg);
+}
+.studio-recap .studio-workflow-line {
+  margin-top: 16px;
+}
+
 /* ---- Simulator compare view ---- */
 .result-compare-wrap {
   margin-top: 22px;
