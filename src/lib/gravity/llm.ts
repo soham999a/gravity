@@ -22,6 +22,58 @@ function isThrottled(status: number, errText: string): boolean {
   return status === 429 || /RESOURCE_EXHAUSTED|rate limit/i.test(errText);
 }
 
+// ---------------------------------------------------------------------------
+// Quota-dead circuit breaker.
+//
+// A 429 that says "quota" (free tier exhausted — e.g. Gemini's
+// generate_content_free_tier_requests, or a 402/insufficient-balance) will
+// NOT clear in seconds. The old code slept up to 20s on EVERY call before
+// failing over, so one dead primary burned the whole Vercel 60s function
+// window and missions died mid-run with nodes stuck `running` (local dev has
+// no such guillotine, which is why localhost kept working). Trip a
+// per-provider cooldown instead and fail over immediately. Plain per-minute
+// rate limits (429 without quota wording) keep the throttle-and-retry path.
+// State is per-instance; cold starts re-probe automatically.
+// ---------------------------------------------------------------------------
+
+const QUOTA_COOLDOWN_MS = 10 * 60_000;
+const BILLING_COOLDOWN_MS = 60 * 60_000;
+
+const deadUntil = new Map<string, number>();
+
+function isQuotaDead(status: number, errText: string): boolean {
+  return status === 429 && /quota|free_tier/i.test(errText);
+}
+
+function isBillingDead(status: number, errText: string): boolean {
+  return status === 401 || status === 402 || status === 403 || /insufficient.*balance|invalid.*key|unauthorized/i.test(errText);
+}
+
+/** Trip the breaker and report whether the caller should fail over NOW. */
+function tripDeadProvider(provider: string, status: number, errText: string): boolean {
+  if (isQuotaDead(status, errText)) {
+    deadUntil.set(provider, Date.now() + QUOTA_COOLDOWN_MS);
+    console.warn(`[llm] ${provider} quota exhausted — cooling down 10min, failing over`);
+    return true;
+  }
+  if (isBillingDead(status, errText)) {
+    deadUntil.set(provider, Date.now() + BILLING_COOLDOWN_MS);
+    console.warn(`[llm] ${provider} billing/auth failure (${status}) — cooling down 60min, failing over`);
+    return true;
+  }
+  return false;
+}
+
+function breakerOpen(provider: string): boolean {
+  const until = deadUntil.get(provider);
+  if (until === undefined) return false;
+  if (until <= Date.now()) {
+    deadUntil.delete(provider);
+    return false;
+  }
+  return true;
+}
+
 export interface LLMResult {
   text: string;
   tokens: number;
@@ -163,6 +215,7 @@ async function callGemini(opts: LLMOpts): Promise<LLMResult> {
         const errText = await res.text();
         const err = new Error(`Gemini ${res.status}: ${errText.slice(0, 300)}`);
         if (isThrottled(res.status, errText) && attempt === 0) {
+          if (tripDeadProvider("gemini", res.status, errText)) throw err;
           lastErr = err;
           await sleep(throttleDelayMs(errText));
           continue;
@@ -192,6 +245,9 @@ async function callGemini(opts: LLMOpts): Promise<LLMResult> {
       break;
     } catch (err) {
       lastErr = err;
+      // Just tripped the quota/billing breaker (or it was already open):
+      // retrying the same dead provider only burns the serverless window.
+      if (breakerOpen("gemini")) throw err;
       // Network/timeout errors: one silent retry.
       if (attempt === 0) {
         await sleep(1200);
@@ -235,6 +291,7 @@ async function callGroq(opts: LLMOpts): Promise<LLMResult> {
         const errText = await res.text();
         const err = new Error(`Groq ${res.status}: ${errText.slice(0, 300)}`);
         if (isThrottled(res.status, errText) && attempt === 0) {
+          if (tripDeadProvider("groq", res.status, errText)) throw err;
           lastErr = err;
           await sleep(throttleDelayMs(errText));
           continue;
@@ -262,6 +319,7 @@ async function callGroq(opts: LLMOpts): Promise<LLMResult> {
       break;
     } catch (err) {
       lastErr = err;
+      if (breakerOpen("groq")) throw err;
       if (attempt === 0) {
         await sleep(1200);
         continue;
@@ -404,6 +462,7 @@ async function callOpenAICompatible(
         const errText = await res.text();
         const err = new Error(`${label} ${res.status}: ${errText.slice(0, 300)}`);
         if (isThrottled(res.status, errText)) {
+          if (tripDeadProvider(kind, res.status, errText)) throw err;
           lastErr = err;
           await sleep(throttleDelayMs(errText));
           skipBackoff = true;
@@ -442,6 +501,7 @@ async function callOpenAICompatible(
       break;
     } catch (err) {
       lastErr = err;
+      if (breakerOpen(kind)) throw err;
       // Network/timeout errors ride the backoff loop; nothing special here.
     }
   }
@@ -624,6 +684,10 @@ export async function callLLM(opts: LLMOpts): Promise<LLMResult> {
 
   let lastError: unknown;
   for (const provider of chain) {
+    if (breakerOpen(provider)) {
+      console.warn(`[llm] ${provider} breaker open — skipping to next provider`);
+      continue;
+    }
     try {
       return await runners[provider](opts);
     } catch (err) {
