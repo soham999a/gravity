@@ -2517,6 +2517,47 @@
   opacity: 0.55;
   cursor: not-allowed;
 }
+/* ---- Google sign-in (secondary) + OR divider ---- */
+.auth-modal-divider,
+.gravity-signin-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  color: var(--color-muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+}
+.auth-modal-divider::before,
+.auth-modal-divider::after,
+.gravity-signin-divider::before,
+.gravity-signin-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+.auth-modal-google {
+  background: transparent;
+  color: var(--color-ivory);
+  border-color: var(--color-border);
+}
+.auth-modal-google:hover:not(:disabled) {
+  background: transparent;
+  border-color: var(--color-gold);
+  color: var(--color-gold);
+}
+.gravity-signin-google {
+  margin-top: 0;
+  border-color: var(--color-border);
+  color: var(--color-ivory);
+}
+.gravity-signin-google:hover:not(:disabled) {
+  background: transparent;
+  border-color: var(--color-gold);
+  color: var(--color-gold);
+}
 .auth-modal-switch {
   margin-top: 18px;
   color: var(--color-muted-foreground);

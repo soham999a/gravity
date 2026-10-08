@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { auth, signInWithGoogle, googleErrorMessage } from "@/lib/firebase";
 import { ArrowRight, Check, Eye, EyeOff } from "lucide-react";
 import { toast } from "@/components/studio/toast";
 
@@ -49,6 +49,7 @@ export function AuthForm({ mode = "login" }: { mode?: "login" | "signup" }) {
   const [showPassword, setShowPassword] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [googleBusy, setGoogleBusy] = React.useState(false);
   const [success, setSuccess] = React.useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -98,6 +99,22 @@ export function AuthForm({ mode = "login" }: { mode?: "login" | "signup" }) {
       else setError(String(err).slice(0, 200));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleGoogle = async () => {
+    if (googleBusy || busy) return;
+    setError(null);
+    setSuccess(null);
+    setGoogleBusy(true);
+    try {
+      await signInWithGoogle();
+      toast("Signed in with Google", "Welcome to GRAVITY Studio.", "success");
+      router.replace(isNewAccount ? "/onboarding" : next);
+    } catch (err: unknown) {
+      setError(googleErrorMessage(err));
+    } finally {
+      setGoogleBusy(false);
     }
   };
 
@@ -369,6 +386,20 @@ export function AuthForm({ mode = "login" }: { mode?: "login" | "signup" }) {
               )}
             </button>
           </form>
+
+          <div className="gravity-signin-divider" aria-hidden="true">
+            <span>OR</span>
+          </div>
+
+          <button
+            className="gravity-signin-submit gravity-signin-google"
+            type="button"
+            disabled={busy || googleBusy}
+            onClick={handleGoogle}
+          >
+            <span>{googleBusy ? "CONNECTING…" : "CONTINUE WITH GOOGLE"}</span>
+            {!googleBusy && <ArrowRight aria-hidden="true" />}
+          </button>
 
           <p className="gravity-signin-switch">
             {mode === "login" ? (

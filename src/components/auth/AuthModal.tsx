@@ -6,7 +6,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
 } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { auth, signInWithGoogle, googleErrorMessage } from "@/lib/firebase";
 import { X } from "lucide-react";
 import { toast } from "@/components/studio/toast";
 
@@ -33,6 +33,7 @@ export function AuthModal({
   const [showPassword, setShowPassword] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [googleBusy, setGoogleBusy] = React.useState(false);
 
   React.useEffect(() => {
     if (!open) return;
@@ -75,6 +76,22 @@ export function AuthModal({
       else setError(String(err).slice(0, 200));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleGoogle = async () => {
+    if (googleBusy || busy) return;
+    setError(null);
+    setGoogleBusy(true);
+    try {
+      await signInWithGoogle();
+      toast("Signed in with Google", "Running your task now.", "success");
+      onSuccess();
+      router.refresh();
+    } catch (err: unknown) {
+      setError(googleErrorMessage(err));
+    } finally {
+      setGoogleBusy(false);
     }
   };
 
@@ -137,6 +154,19 @@ export function AuthModal({
             <span>{busy ? "Working…" : mode === "signup" ? "Create & run my task" : "Sign in & run my task"}</span>
           </button>
         </form>
+
+        <div className="auth-modal-divider" aria-hidden="true">
+          <span>OR</span>
+        </div>
+
+        <button
+          type="button"
+          className="auth-modal-submit auth-modal-google"
+          disabled={busy || googleBusy}
+          onClick={handleGoogle}
+        >
+          <span>{googleBusy ? "Connecting…" : "Continue with Google"}</span>
+        </button>
 
         <p className="auth-modal-switch">
           {mode === "signup" ? "Already have an account?" : "New to GRAVITY?"}{" "}

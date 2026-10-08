@@ -12,10 +12,12 @@ export function cn(...inputs: ClassValue[]) {
  * leaving a mission stuck in "pending" forever (execute is fire-and-forget
  * and nothing else ever re-triggers it).
  */
-export function kickExecute(missionId: string, attempts = 2): void {
+export function kickExecute(missionId: string, attempts = 3): void {
   fetch(`/api/missions/${missionId}/execute`, { method: "POST", credentials: "include" })
     .then((res) => {
-      if (!res.ok && res.status >= 500 && attempts > 0) {
+      // Retry on transient dev states: 404 = Turbopack/Fast-Refresh recompile
+      // or stale tab hitting an old dev-server port; 429/5xx = cold/loaded.
+      if (!res.ok && (res.status === 404 || res.status === 429 || res.status >= 500) && attempts > 0) {
         setTimeout(() => kickExecute(missionId, attempts - 1), 1_200);
       }
     })
