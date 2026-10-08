@@ -668,19 +668,27 @@ async function judgeOutput(missionPrompt: string, output: string): Promise<{ jud
 export async function failStaleMissions(): Promise<number> {
   // Firestore doesn't have a simple "lt" with "inArray" easily,
   // so we query for active statuses and filter by time in JS.
-  const { adminDb } = await import("@/lib/firebase-admin");
-  const snap = await adminDb.collection("missions")
-    .where("status", "in", ["executing", "evaluating", "pending", "profiling", "routing"])
-    .get();
-  const cutoff = new Date(Date.now() - 3 * 60_000).toISOString();
-  const stale = snap.docs.filter((d) => d.data().createdAt < cutoff);
-  if (stale.length === 0) return 0;
-  const batch = adminDb.batch();
-  for (const doc of stale) {
-    batch.update(doc.ref, { status: "failed", completedAt: new Date().toISOString() });
+  // Guarded: quota outages must not crash the cron — skip quietly.
+  const { dbAllowed, fs } = await import("@/lib/db-guard");
+  if (!dbAllowed()) return 0;
+  try {
+    const { adminDb } = await import("@/lib/firebase-admin");
+    const snap = await fs(() => adminDb.collection("missions")
+      .where("status", "in", ["executing", "evaluating", "pending", "profiling", "routing"])
+      .get());
+    const cutoff = new Date(Date.now() - 3 * 60_000).toISOString();
+    const stale = snap.docs.filter((d) => d.data().createdAt < cutoff);
+    if (stale.length === 0) return 0;
+    const batch = adminDb.batch();
+    for (const doc of stale) {
+      batch.update(doc.ref, { status: "failed", completedAt: new Date().toISOString() });
+    }
+    await fs(() => batch.commit());
+    return stale.length;
+  } catch (err) {
+    console.warn("[pipeline] stale watchdog skipped:", String(err).slice(0, 120));
+    return 0;
   }
-  await batch.commit();
-  return stale.length;
 }
 
 // ---------------------------------------------------------------------------

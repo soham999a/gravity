@@ -10,6 +10,7 @@
  */
 
 import { isFirebaseReady, adminDb } from "@/lib/firebase-admin";
+import { dbAllowed, fs } from "@/lib/db-guard";
 import type {
   BenchmarkAggregate,
   BenchmarkRecord,
@@ -22,7 +23,7 @@ const RECORDS = "benchmark_records";
 
 function useFirestore(): boolean {
   try {
-    return isFirebaseReady();
+    return isFirebaseReady() && dbAllowed();
   } catch {
     return false;
   }
@@ -48,7 +49,7 @@ export async function saveBenchmarkRun(
         const id = `${record.benchmarkRunId}_${record.system}_${record.workloadClass}_${record.taskId}_${record.timestamp}`;
         batch.set(adminDb.collection(RECORDS).doc(id), record);
       }
-      await batch.commit();
+      await fs(() => batch.commit());
       return { runId: manifest.runId, persisted: true, recordCount: records.length };
     } catch (err) {
       console.warn("[benchmark-store] Firestore write failed, in-memory only:", String(err).slice(0, 160));
@@ -64,11 +65,13 @@ export async function listBenchmarkRuns(limit = 20): Promise<BenchmarkRunManifes
   for (const manifest of memRuns.values()) merged.set(manifest.runId, manifest);
   if (useFirestore()) {
     try {
-      const snap = await adminDb
-        .collection(RUNS)
-        .orderBy("startedAt", "desc")
-        .limit(limit)
-        .get();
+      const snap = await fs(() =>
+        adminDb
+          .collection(RUNS)
+          .orderBy("startedAt", "desc")
+          .limit(limit)
+          .get(),
+      );
       for (const doc of snap.docs) {
         const manifest = doc.data() as BenchmarkRunManifest;
         merged.set(manifest.runId, manifest);
@@ -93,14 +96,16 @@ export async function getBenchmarkRun(runId: string): Promise<{
   if (useFirestore()) {
     try {
       if (!manifest) {
-        const doc = await adminDb.collection(RUNS).doc(runId).get();
+        const doc = await fs(() => adminDb.collection(RUNS).doc(runId).get());
         manifest = doc.exists ? (doc.data() as BenchmarkRunManifest) : null;
       }
-      const snap = await adminDb
-        .collection(RECORDS)
-        .where("benchmarkRunId", "==", runId)
-        .limit(1000)
-        .get();
+      const snap = await fs(() =>
+        adminDb
+          .collection(RECORDS)
+          .where("benchmarkRunId", "==", runId)
+          .limit(1000)
+          .get(),
+      );
       records = snap.docs.map((d) => d.data() as BenchmarkRecord);
       if (records.length > 0) return { manifest, records, aggregates: groupAggregates(records) };
     } catch (err) {
@@ -135,7 +140,7 @@ export async function appendBenchmarkRecords(records: BenchmarkRecord[]): Promis
         const id = `${record.benchmarkRunId}_${record.system}_${record.workloadClass}_${record.taskId}_${record.timestamp}`;
         batch.set(adminDb.collection(RECORDS).doc(id), record);
       }
-      await batch.commit();
+      await fs(() => batch.commit());
     } catch (err) {
       console.warn("[benchmark-store] Firestore append failed:", String(err).slice(0, 160));
     }

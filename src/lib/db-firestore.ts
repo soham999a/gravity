@@ -6,6 +6,7 @@
  */
 
 import { isFirebaseReady, adminDb } from "./firebase-admin";
+import { dbAllowed, fs } from "./db-guard";
 
 // ---------------------------------------------------------------------------
 // Generic helpers
@@ -21,7 +22,10 @@ function docId(): string {
 
 function useFirestore(): boolean {
   try {
-    return isFirebaseReady();
+    // dbAllowed() is the circuit breaker: after repeated Firestore failures
+    // (e.g. quota exhausted) we skip it entirely for a cooldown and serve
+    // from memory instantly instead of hanging every request ~20s.
+    return isFirebaseReady() && dbAllowed();
   } catch {
     return false;
   }
@@ -60,14 +64,14 @@ export interface TenantDoc {
 export async function getOrCreateTenant(slug: string, name: string): Promise<TenantDoc> {
   if (useFirestore()) {
     try {
-      const snap = await col("tenants").where("slug", "==", slug).limit(1).get();
+      const snap = await fs(() => col("tenants").where("slug", "==", slug).limit(1).get());
       if (!snap.empty) {
         const doc = snap.docs[0]!;
         return { id: doc.id, ...doc.data() } as TenantDoc;
       }
       const id = docId();
       const tenant: TenantDoc = { id, name, slug, createdAt: new Date().toISOString() };
-      await col("tenants").doc(id).set(tenant);
+      await fs(() => col("tenants").doc(id).set(tenant));
       return tenant;
     } catch (err) {
       if (isStrictDb()) throw err;
@@ -104,7 +108,7 @@ export async function getOrCreateUser(
 ): Promise<UserDoc> {
   if (useFirestore()) {
     try {
-      const doc = await col("users").doc(uid).get();
+      const doc = await fs(() => col("users").doc(uid).get());
       if (doc.exists) return { id: doc.id, ...doc.data() } as UserDoc;
 
       const slugBase = email
@@ -123,7 +127,7 @@ export async function getOrCreateUser(
         role: "owner",
         createdAt: new Date().toISOString(),
       };
-      await col("users").doc(uid).set(user);
+      await fs(() => col("users").doc(uid).set(user));
       return user;
     } catch (err) {
       if (isStrictDb()) throw err;
@@ -183,7 +187,7 @@ export async function createMission(data: Omit<MissionDoc, "id" | "createdAt">):
 
   if (useFirestore()) {
     try {
-      await col("missions").doc(id).set(mission);
+      await fs(() => col("missions").doc(id).set(mission));
       return mission;
     } catch (err) {
       if (isStrictDb()) throw err;
@@ -197,7 +201,7 @@ export async function createMission(data: Omit<MissionDoc, "id" | "createdAt">):
 export async function getMission(id: string): Promise<MissionDoc | null> {
   if (useFirestore()) {
     try {
-      const doc = await col("missions").doc(id).get();
+      const doc = await fs(() => col("missions").doc(id).get());
       if (!doc.exists) return null;
       return { id: doc.id, ...doc.data() } as MissionDoc;
     } catch (err) {
@@ -211,7 +215,7 @@ export async function getMission(id: string): Promise<MissionDoc | null> {
 export async function updateMission(id: string, data: Partial<MissionDoc>): Promise<void> {
   if (useFirestore()) {
     try {
-      await col("missions").doc(id).update(data);
+      await fs(() => col("missions").doc(id).update(data));
       return;
     } catch (err) {
       if (isStrictDb()) throw err;
@@ -227,7 +231,7 @@ export async function listMissions(tenantId: string, limit = 50): Promise<Missio
     try {
       // Equality-only query (no orderBy) to avoid requiring a composite index.
       // Sort + slice client-side instead.
-      const snap = await col("missions").where("tenantId", "==", tenantId).get();
+      const snap = await fs(() => col("missions").where("tenantId", "==", tenantId).get());
       return snap.docs
         .map((d: any) => ({ id: d.id, ...d.data() } as MissionDoc))
         .sort((a: any, b: any) =>
@@ -249,18 +253,18 @@ export async function deleteMission(id: string): Promise<void> {
   if (useFirestore()) {
     try {
       const batch = adminDb.batch();
-      const runsSnap = await col("executionRuns").where("missionId", "==", id).get();
+      const runsSnap = await fs(() => col("executionRuns").where("missionId", "==", id).get());
       for (const run of runsSnap.docs) {
-        const nodesSnap = await col("executionNodes").where("runId", "==", run.id).get();
+        const nodesSnap = await fs(() => col("executionNodes").where("runId", "==", run.id).get());
         for (const node of nodesSnap.docs) batch.delete(node.ref);
         batch.delete(run.ref);
       }
       for (const c of ["problemProfiles", "routingDecisions", "evaluations", "decisionLedger"]) {
-        const snap = await col(c).where("missionId", "==", id).get();
+        const snap = await fs(() => col(c).where("missionId", "==", id).get());
         for (const d of snap.docs) batch.delete(d.ref);
       }
       batch.delete(col("missions").doc(id));
-      await batch.commit();
+      await fs(() => batch.commit());
       return;
     } catch (err) {
       if (isStrictDb()) throw err;
@@ -297,7 +301,7 @@ export async function createProblemProfile(data: Omit<ProblemProfileDoc, "id">):
   const doc: ProblemProfileDoc = { ...data, id };
   if (useFirestore()) {
     try {
-      await col("problemProfiles").doc(id).set(doc);
+      await fs(() => col("problemProfiles").doc(id).set(doc));
       return doc;
     } catch (err) {
       console.warn("[db] Firestore problemProfiles.create failed:", String(err).slice(0, 120));
@@ -310,7 +314,7 @@ export async function createProblemProfile(data: Omit<ProblemProfileDoc, "id">):
 export async function getProblemProfile(missionId: string): Promise<ProblemProfileDoc | null> {
   if (useFirestore()) {
     try {
-      const snap = await col("problemProfiles").where("missionId", "==", missionId).limit(1).get();
+      const snap = await fs(() => col("problemProfiles").where("missionId", "==", missionId).limit(1).get());
       if (snap.empty) return null;
       const d = snap.docs[0]!;
       return { id: d.id, ...d.data() } as ProblemProfileDoc;
@@ -343,7 +347,7 @@ export async function createRoutingDecision(data: Omit<RoutingDecisionDoc, "id">
   const doc: RoutingDecisionDoc = { ...data, id };
   if (useFirestore()) {
     try {
-      await col("routingDecisions").doc(id).set(doc);
+      await fs(() => col("routingDecisions").doc(id).set(doc));
       return doc;
     } catch (err) {
       console.warn("[db] Firestore routingDecisions.create failed:", String(err).slice(0, 120));
@@ -356,7 +360,7 @@ export async function createRoutingDecision(data: Omit<RoutingDecisionDoc, "id">
 export async function getRoutingDecision(missionId: string): Promise<RoutingDecisionDoc | null> {
   if (useFirestore()) {
     try {
-      const snap = await col("routingDecisions").where("missionId", "==", missionId).limit(1).get();
+      const snap = await fs(() => col("routingDecisions").where("missionId", "==", missionId).limit(1).get());
       if (snap.empty) return null;
       const d = snap.docs[0]!;
       return { id: d.id, ...d.data() } as RoutingDecisionDoc;
@@ -391,7 +395,7 @@ export async function createExecutionRun(missionId: string): Promise<ExecutionRu
   };
   if (useFirestore()) {
     try {
-      await col("executionRuns").doc(id).set(run);
+      await fs(() => col("executionRuns").doc(id).set(run));
       return run;
     } catch (err) {
       console.warn("[db] Firestore executionRuns.create failed:", String(err).slice(0, 120));
@@ -404,7 +408,7 @@ export async function createExecutionRun(missionId: string): Promise<ExecutionRu
 export async function updateExecutionRun(id: string, data: Partial<ExecutionRunDoc>): Promise<void> {
   if (useFirestore()) {
     try {
-      await col("executionRuns").doc(id).update(data);
+      await fs(() => col("executionRuns").doc(id).update(data));
       return;
     } catch (err) {
       console.warn("[db] Firestore executionRuns.update failed:", String(err).slice(0, 120));
@@ -417,7 +421,7 @@ export async function updateExecutionRun(id: string, data: Partial<ExecutionRunD
 export async function getExecutionRuns(missionId: string): Promise<ExecutionRunDoc[]> {
   if (useFirestore()) {
     try {
-      const snap = await col("executionRuns").where("missionId", "==", missionId).get();
+      const snap = await fs(() => col("executionRuns").where("missionId", "==", missionId).get());
       return snap.docs.map((d: any) => ({ id: d.id, ...d.data() } as ExecutionRunDoc));
     } catch (err) {
       console.warn("[db] Firestore executionRuns.get failed:", String(err).slice(0, 120));
@@ -453,7 +457,7 @@ export async function createExecutionNode(data: Omit<ExecutionNodeDoc, "id">): P
   const node: ExecutionNodeDoc = { ...data, id };
   if (useFirestore()) {
     try {
-      await col("executionNodes").doc(id).set(node);
+      await fs(() => col("executionNodes").doc(id).set(node));
       return node;
     } catch (err) {
       console.warn("[db] Firestore executionNodes.create failed:", String(err).slice(0, 120));
@@ -466,7 +470,7 @@ export async function createExecutionNode(data: Omit<ExecutionNodeDoc, "id">): P
 export async function updateExecutionNode(id: string, data: Partial<ExecutionNodeDoc>): Promise<void> {
   if (useFirestore()) {
     try {
-      await col("executionNodes").doc(id).update(data);
+      await fs(() => col("executionNodes").doc(id).update(data));
       return;
     } catch (err) {
       console.warn("[db] Firestore executionNodes.update failed:", String(err).slice(0, 120));
@@ -479,7 +483,7 @@ export async function updateExecutionNode(id: string, data: Partial<ExecutionNod
 export async function getExecutionNodes(runId: string): Promise<ExecutionNodeDoc[]> {
   if (useFirestore()) {
     try {
-      const snap = await col("executionNodes").where("runId", "==", runId).get();
+      const snap = await fs(() => col("executionNodes").where("runId", "==", runId).get());
       return snap.docs.map((d: any) => ({ id: d.id, ...d.data() } as ExecutionNodeDoc));
     } catch (err) {
       console.warn("[db] Firestore executionNodes.get failed:", String(err).slice(0, 120));
@@ -507,7 +511,7 @@ export async function createEvaluation(data: Omit<EvaluationDoc, "id">): Promise
   const doc: EvaluationDoc = { ...data, id };
   if (useFirestore()) {
     try {
-      await col("evaluations").doc(id).set(doc);
+      await fs(() => col("evaluations").doc(id).set(doc));
       return doc;
     } catch (err) {
       console.warn("[db] Firestore evaluations.create failed:", String(err).slice(0, 120));
@@ -520,7 +524,7 @@ export async function createEvaluation(data: Omit<EvaluationDoc, "id">): Promise
 export async function getEvaluation(missionId: string): Promise<EvaluationDoc | null> {
   if (useFirestore()) {
     try {
-      const snap = await col("evaluations").where("missionId", "==", missionId).limit(1).get();
+      const snap = await fs(() => col("evaluations").where("missionId", "==", missionId).limit(1).get());
       if (snap.empty) return null;
       const d = snap.docs[0]!;
       return { id: d.id, ...d.data() } as EvaluationDoc;
@@ -561,7 +565,7 @@ export async function createDecisionLedgerEntry(data: Omit<DecisionLedgerDoc, "i
   const doc: DecisionLedgerDoc = { ...data, id, timestamp: new Date().toISOString() };
   if (useFirestore()) {
     try {
-      await col("decisionLedger").doc(id).set(doc);
+      await fs(() => col("decisionLedger").doc(id).set(doc));
       return doc;
     } catch (err) {
       console.warn("[db] Firestore decisionLedger.create failed:", String(err).slice(0, 120));

@@ -9,6 +9,7 @@
  */
 
 import { adminAuth, adminDb, isFirebaseReady } from "./firebase-admin";
+import { cachedTenant, dbAllowed, fs, storeTenant } from "./db-guard";
 import type { NextRequest } from "next/server";
 
 export interface AuthContext {
@@ -25,14 +26,21 @@ function isProduction(): boolean {
 }
 
 async function getOrCreateUser(uid: string, email: string, name: string | null): Promise<string> {
-  if (!isFirebaseReady()) return DEFAULT_TENANT;
+  if (!isFirebaseReady() || !dbAllowed()) return cachedTenant(uid) ?? DEFAULT_TENANT;
+
+  // Tenant cache: auth runs on EVERY request (each poll tick) — don't burn
+  // a Firestore read per request for an already-provisioned user.
+  const hit = cachedTenant(uid);
+  if (hit) return hit;
 
   try {
     const userRef = adminDb.collection("users").doc(uid);
-    const userSnap = await userRef.get();
+    const userSnap = await fs(() => userRef.get());
 
     if (userSnap.exists) {
-      return userSnap.data()!.tenantId;
+      const tenantId = userSnap.data()!.tenantId;
+      storeTenant(uid, tenantId);
+      return tenantId;
     }
 
     // First request: auto-provision tenant + user
@@ -43,7 +51,9 @@ async function getOrCreateUser(uid: string, email: string, name: string | null):
       .slice(0, 24);
     const slug = `${slugBase}-${uid.slice(0, 8)}`;
 
-    const tenantsSnap = await adminDb.collection("tenants").where("slug", "==", slug).limit(1).get();
+    const tenantsSnap = await fs(() =>
+      adminDb.collection("tenants").where("slug", "==", slug).limit(1).get(),
+    );
     let tenantId: string;
 
     if (!tenantsSnap.empty) {
@@ -51,23 +61,28 @@ async function getOrCreateUser(uid: string, email: string, name: string | null):
     } else {
       const tenantRef = adminDb.collection("tenants").doc();
       tenantId = tenantRef.id;
-      await tenantRef.set({
-        id: tenantId,
-        name: `${slugBase}'s workspace`,
-        slug,
-        createdAt: new Date().toISOString(),
-      });
+      await fs(() =>
+        tenantRef.set({
+          id: tenantId,
+          name: `${slugBase}'s workspace`,
+          slug,
+          createdAt: new Date().toISOString(),
+        }),
+      );
     }
 
-    await userRef.set({
-      id: uid,
-      tenantId,
-      email,
-      name: name ?? null,
-      role: "owner",
-      createdAt: new Date().toISOString(),
-    });
+    await fs(() =>
+      userRef.set({
+        id: uid,
+        tenantId,
+        email,
+        name: name ?? null,
+        role: "owner",
+        createdAt: new Date().toISOString(),
+      }),
+    );
 
+    storeTenant(uid, tenantId);
     return tenantId;
   } catch (err) {
     console.error("[api-auth] Firestore provisioning failed:", String(err).slice(0, 200));
