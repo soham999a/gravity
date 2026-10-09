@@ -558,6 +558,9 @@ export async function streamOpenRouter(
           max_tokens: opts.maxTokens ?? 768,
           ...(opts.json ? { response_format: { type: "json_object" } } : {}),
           stream: true,
+          // Ask OpenRouter to append a usage chunk so chat can meter real
+          // tokens + cost (absent on some models → stays honestly null).
+          stream_options: { include_usage: true },
         }),
         signal: AbortSignal.timeout(opts.timeoutMs ?? 45_000),
       });
@@ -575,6 +578,7 @@ export async function streamOpenRouter(
       let buffer = "";
       let text = "";
       let served = model;
+      let usage: { prompt_tokens?: number; completion_tokens?: number } | null = null;
       try {
         for (;;) {
           if (opts.signal?.aborted) throw new Error("OPENROUTER_ABORTED");
@@ -588,7 +592,7 @@ export async function streamOpenRouter(
             if (!trimmed.startsWith("data:")) continue;
             const data = trimmed.slice(5).trim();
             if (data === "[DONE]") continue;
-            let event: { model?: string; choices?: { delta?: { content?: string } }[]; error?: { message?: string } };
+            let event: { model?: string; choices?: { delta?: { content?: string } }[]; error?: { message?: string }; usage?: { prompt_tokens?: number; completion_tokens?: number } };
             try {
               event = JSON.parse(data) as typeof event;
             } catch {
@@ -596,6 +600,7 @@ export async function streamOpenRouter(
             }
             if (event.error) throw new Error(`OpenRouter stream: ${event.error.message ?? "unknown"}`);
             if (event.model) served = event.model;
+            if (event.usage) usage = event.usage;
             const delta = event.choices?.[0]?.delta?.content;
             if (delta) {
               text += delta;
@@ -608,13 +613,17 @@ export async function streamOpenRouter(
       }
       const finalText = text.trim();
       if (!finalText) throw new Error("OPENROUTER_EMPTY_RESPONSE");
+      const inputTokens = usage?.prompt_tokens ?? null;
+      const outputTokens = usage?.completion_tokens ?? null;
       return {
         text: finalText,
-        tokens: 0,
+        tokens: outputTokens ?? 0,
         latencyMs: Date.now() - started,
         model: served,
         provider: "openrouter",
         attempts: attempt + 1,
+        inputTokens: inputTokens ?? undefined,
+        costUsd: estimateCostUsd(served, inputTokens, outputTokens, 0),
       };
     } catch (err) {
       if (err instanceof Error && err.message === "OPENROUTER_ABORTED") throw err;

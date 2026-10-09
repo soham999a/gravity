@@ -148,7 +148,7 @@ function HomeContent() {
         focusChatInput();
         return;
       }
-      if (chatOpen && event.key === "Escape" && !(event.target instanceof HTMLInputElement)) {
+      if (chatOpen && event.key === "Escape" && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) {
         setChatOpen(false);
       }
     };

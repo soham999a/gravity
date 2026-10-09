@@ -7,6 +7,9 @@ export interface ChatMsg {
   content: string;
   model?: string;
   ms?: number;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  costUsd?: number | null;
 }
 
 export interface ChatThread {
@@ -14,7 +17,18 @@ export interface ChatThread {
   title: string;
   createdAt: string;
   messages: ChatMsg[];
+  /** Per-thread model override (OpenRouter slug) — undefined = default workhorse. */
+  model?: string;
+  pinned?: boolean;
 }
+
+/** Picker rungs the client may offer — the server allowlists the same set. */
+export const CHAT_MODELS = [
+  { slug: "", label: "Auto workhorse" },
+  { slug: "deepseek/deepseek-v4.1-flash", label: "DeepSeek V4 Flash" },
+  { slug: "anthropic/claude-sonnet-5.5", label: "Claude Sonnet 5.5" },
+  { slug: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
+] as const;
 
 const STORAGE_KEY = "gravity.chat.v1";
 const MAX_THREADS = 30;
@@ -39,12 +53,12 @@ async function readSSE(
   res: Response,
   onDelta: (chunk: string) => void,
   signal: AbortSignal,
-): Promise<{ model?: string; error?: string }> {
+): Promise<{ model?: string; error?: string; inputTokens?: number | null; outputTokens?: number | null; costUsd?: number | null }> {
   const reader = res.body?.getReader();
   if (!reader) throw new Error("no stream body");
   const decoder = new TextDecoder();
   let buffer = "";
-  let meta: { model?: string; error?: string } = {};
+  let meta: { model?: string; error?: string; inputTokens?: number | null; outputTokens?: number | null; costUsd?: number | null } = {};
   for (;;) {
     if (signal.aborted) throw new Error("STOPPED");
     const { done, value } = await reader.read();
@@ -58,9 +72,17 @@ async function readSSE(
       const data = t.slice(5).trim();
       if (!data || data === "[DONE]") continue;
       try {
-        const evt = JSON.parse(data) as { delta?: string; done?: boolean; model?: string; error?: string };
+        const evt = JSON.parse(data) as { delta?: string; done?: boolean; model?: string; error?: string; inputTokens?: number | null; outputTokens?: number | null; costUsd?: number | null };
         if (typeof evt.delta === "string" && evt.delta) onDelta(evt.delta);
-        if (evt.done) meta = { ...meta, model: evt.model };
+        if (evt.done) {
+          meta = {
+            ...meta,
+            model: evt.model,
+            inputTokens: evt.inputTokens ?? null,
+            outputTokens: evt.outputTokens ?? null,
+            costUsd: evt.costUsd ?? null,
+          };
+        }
         if (evt.error) meta = { ...meta, error: evt.error };
       } catch {
         /* partial line — next chunk completes it */
@@ -100,11 +122,20 @@ export function useChatThreads() {
   };
 
   const newThread = React.useCallback((): string => {
-    const id = `chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-    setThreads((prev) =>
-      [{ id, title: "New chat", createdAt: new Date().toISOString(), messages: [] }, ...prev].slice(0, MAX_THREADS),
-    );
-    setActiveId(id);
+    // Reuse an existing empty draft instead of piling up "New chat" zombies.
+    let existing: string | null = null;
+    setThreads((prev) => {
+      const empty = prev.find((t) => t.messages.length === 0);
+      if (empty) {
+        existing = empty.id;
+        return prev;
+      }
+      const id = `chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      existing = id;
+      return [{ id, title: "New chat", createdAt: new Date().toISOString(), messages: [] }, ...prev].slice(0, MAX_THREADS);
+    });
+    const id = existing ?? "";
+    setActiveId(id || null);
     setPhase("idle");
     setError(null);
     return id;
@@ -126,13 +157,16 @@ export function useChatThreads() {
   }, []);
 
   const send = React.useCallback(
-    async (text: string, opts?: { temperature?: number; variation?: boolean; threadId?: string }) => {
+    async (text: string, opts?: { temperature?: number; variation?: boolean; threadId?: string; model?: string }) => {
       const prompt = text.trim();
       if (!prompt || phase === "streaming") return;
       let tid = opts?.threadId ?? activeId;
       if (!tid) tid = newThread();
       const targetId = tid;
       const temp = opts?.temperature ?? (opts?.variation ? 0.9 : 0.4);
+      // Per-thread model wins; explicit opt overrides for one shot.
+      const threadModel = threads.find((t) => t.id === targetId)?.model;
+      const model = opts?.model ?? threadModel ?? undefined;
       const userContent = opts?.variation
         ? `${prompt}\n\n(Give a distinctly different take from your previous answer.)`
         : prompt;
@@ -184,6 +218,7 @@ export function useChatThreads() {
           body: JSON.stringify({
             messages: [...history, { role: "user", content: userContent }],
             temperature: temp,
+            ...(model ? { model } : {}),
           }),
         });
         if (!res.ok) throw new Error(`Status ${res.status}`);
@@ -196,7 +231,14 @@ export function useChatThreads() {
             const msgs = [...t.messages];
             const last = msgs[msgs.length - 1];
             if (last && last.role === "assistant") {
-              msgs[msgs.length - 1] = { ...last, model: meta.model, ms };
+              msgs[msgs.length - 1] = {
+                ...last,
+                model: meta.model,
+                ms,
+                inputTokens: meta.inputTokens ?? null,
+                outputTokens: meta.outputTokens ?? null,
+                costUsd: meta.costUsd ?? null,
+              };
             }
             return { ...t, messages: msgs };
           }),
@@ -225,8 +267,20 @@ export function useChatThreads() {
         if (abortRef.current === controller) abortRef.current = null;
       }
     },
-    [activeId, newThread, phase],
+    [activeId, newThread, phase, threads],
   );
+
+  /** Pin/unpin a thread (pinned sort first). */
+  const togglePin = React.useCallback((id: string) => {
+    setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, pinned: !t.pinned } : t)));
+  }, []);
+
+  /** Per-thread model override (OpenRouter slug, "" clears to Auto). */
+  const setThreadModel = React.useCallback((id: string, model: string) => {
+    setThreads((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, model: model || undefined } : t)),
+    );
+  }, []);
 
   /** Resend the last user turn (same history, no duplicate user message). */
   const retry = React.useCallback(() => {
@@ -254,5 +308,5 @@ export function useChatThreads() {
 
   React.useEffect(() => () => stopTimer(), []);
 
-  return { threads, active, activeId, setActiveId, newThread, removeThread, send, stop, retry, variation, phase, error, elapsedMs };
+  return { threads, active, activeId, setActiveId, newThread, removeThread, send, stop, retry, variation, togglePin, setThreadModel, phase, error, elapsedMs };
 }
