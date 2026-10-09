@@ -26,6 +26,10 @@ interface Aggregate {
   avgTokensPerTask: number | null;
   avgIntelligenceLevel: number | null;
   totalCost: number | null;
+  avgQualityScore: number | null;
+  verificationPassRate: number | null;
+  costPerSuccessfulTask: number | null;
+  decisionEfficiency: number | null;
 }
 
 interface RecordRow {
@@ -35,6 +39,7 @@ interface RecordRow {
   model: string | null;
   success: boolean;
   verificationStatus: string;
+  qualityScore: number | null;
   inputTokens: number | null;
   outputTokens: number | null;
   latencyMs: number;
@@ -105,6 +110,7 @@ export default function BenchmarkPage() {
   const [phase, setPhase] = React.useState<"idle" | "running" | "error">("idle");
   const [error, setError] = React.useState<string | null>(null);
   const [showRecords, setShowRecords] = React.useState(false);
+  const [elapsedSec, setElapsedSec] = React.useState(0);
 
   const load = React.useCallback(async () => {
     try {
@@ -164,10 +170,19 @@ export default function BenchmarkPage() {
     }
     setPhase("running");
     setError(null);
+    setElapsedSec(0);
+    // Client safety net: a run can never stick on RUNNING forever. If the
+    // connection drops (server restart, sleep, blip) the request may never
+    // settle — abort at 11 min and reload the latest persisted run, because
+    // a finished run is saved server-side even if our response was lost.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 11 * 60_000);
+    const tickId = setInterval(() => setElapsedSec((s) => s + 1), 1000);
     try {
       const res = await fetch("/api/benchmark", { credentials: "include",
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           systems: [...selected],
           classes: [...selectedClasses],
@@ -183,15 +198,51 @@ export default function BenchmarkPage() {
       setSkippedSystems(data.skippedSystems ?? []);
       setPhase("idle");
     } catch (err) {
+      // Refresh anyway: the run may have completed server-side while our
+      // connection was lost — persisted results beat a stuck spinner.
+      try {
+        const latest = await fetch("/api/benchmark", { credentials: "include" });
+        if (latest.ok) {
+          const data = await latest.json();
+          if (data.manifest && (data.records ?? []).length > 0) {
+            setManifest(data.manifest ?? null);
+            setAggregates(data.aggregates ?? []);
+            setRecords(data.records ?? []);
+          }
+        }
+      } catch {
+        /* offline — keep the honest error below */
+      }
       setPhase("error");
-      setError(err instanceof Error ? err.message : "benchmark run failed");
+      setError(
+        err instanceof DOMException && err.name === "AbortError"
+          ? "Run timed out on our screen after 11 min — it may still have finished server-side (results above, if any). Refresh to check; don't spam RUN (5/hour limit)."
+          : err instanceof Error ? err.message : "benchmark run failed",
+      );
+    } finally {
+      clearTimeout(timeoutId);
+      clearInterval(tickId);
     }
-  }, [selected, selectedClasses, runsPerClass, seed, phase, comboCount]);
+  }, [selected, selectedClasses, runsPerClass, seed, phase, comboCount, load]);
 
   const systemOrder = SYSTEMS.map((s) => s.id);
   const classOrder = ["A", "B", "C", "D", "E"];
   const aggregateFor = (system: string, workloadClass: string) =>
     aggregates.find((a) => a.system === system && a.workloadClass === workloadClass) ?? null;
+
+  // ── Real points: deterministic composite of MEASURED rates only ──
+  // cell points = 100 × (0.7 × successRate + 0.3 × verificationPassRate),
+  // falling back to whichever rate is measured. Null (rendered "—") only
+  // when the cell measured nothing — never a fabricated number.
+  const cellPoints = (a: Aggregate): number | null => {
+    const sr = a.taskSuccessRate;
+    const vpr = a.verificationPassRate ?? null;
+    if (sr === null && vpr === null) return null;
+    const s = sr ?? vpr!;
+    const v = vpr ?? sr!;
+    return Math.round(100 * (0.7 * s + 0.3 * v));
+  };
+  const pts = (value: number | null) => (value === null ? "—" : `${value} pts`);
 
   // Visual comparison: per-system means across classes (nulls excluded).
   const systemSummary = systemOrder
@@ -204,16 +255,29 @@ export default function BenchmarkPage() {
         const vals = rows.map(pick).filter((v): v is number => v !== null);
         return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
       };
+      const pointVals = rows.map(cellPoints).filter((v): v is number => v !== null);
       return {
         system,
         success: mean((a) => a.taskSuccessRate),
         tokens: mean((a) => a.avgTokensPerTask),
         latency: mean((a) => a.p50LatencyMs),
+        quality: mean((a) => a.avgQualityScore),
+        points: pointVals.length > 0 ? pointVals.reduce((a, b) => a + b, 0) / pointVals.length : null,
       };
     })
     .filter((s) => s !== null);
   const maxTokens = Math.max(1, ...systemSummary.map((s) => s.tokens ?? 0));
   const maxLatency = Math.max(1, ...systemSummary.map((s) => s.latency ?? 0));
+
+  // Leaderboard: rank systems by real points (tiebreak: success, then quality).
+  const leaderboard = [...systemSummary].sort((a, b) => {
+    const dp = (b.points ?? -1) - (a.points ?? -1);
+    if (dp !== 0) return dp;
+    const ds = (b.success ?? -1) - (a.success ?? -1);
+    if (ds !== 0) return ds;
+    return (b.quality ?? -1) - (a.quality ?? -1);
+  });
+  const maxPoints = Math.max(1, ...leaderboard.map((s) => s.points ?? 0));
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-10 px-6 py-10">
@@ -316,7 +380,7 @@ export default function BenchmarkPage() {
           disabled={phase === "running" || selected.size === 0 || selectedClasses.size === 0}
           className="studio-primary-button px-5 py-2 disabled:opacity-50"
         >
-          {phase === "running" ? "RUNNING…" : `RUN ${selected.size} SYSTEM${selected.size === 1 ? "" : "S"} × ${selectedClasses.size} CLASS${selectedClasses.size === 1 ? "" : "ES"}`}
+          {phase === "running" ? `RUNNING… ${Math.floor(elapsedSec / 60)}:${String(elapsedSec % 60).padStart(2, "0")} · ${comboCount} combos, don't close` : `RUN ${selected.size} SYSTEM${selected.size === 1 ? "" : "S"} × ${selectedClasses.size} CLASS${selectedClasses.size === 1 ? "" : "ES"}`}
         </button>
         <button
           type="button"
@@ -404,6 +468,39 @@ export default function BenchmarkPage() {
         </section>
       ) : null}
 
+      {/* ── Leaderboard: real points, ranked ── */}
+      {leaderboard.length > 0 ? (
+        <section className="space-y-4">
+          <p className="meta">LEADERBOARD · REAL POINTS (100 × 0.7 SUCCESS + 0.3 VERIFY, PER CLASS MEAN)</p>
+          <div className="grid gap-2">
+            {leaderboard.map((s, rank) => (
+              <div key={s.system} className="rounded-lg border border-border bg-surface p-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-sm text-ivory">
+                    <span className="meta mr-2 text-gold">#{rank + 1}</span>
+                    {s.system}
+                  </span>
+                  <span className="meta">
+                    {s.points === null ? "— pts" : `${Math.round(s.points)} pts`}
+                    {s.success === null ? " · — success" : ` · ${Math.round(s.success * 100)}% success`}
+                    {s.quality !== null ? ` · Q ${s.quality.toFixed(2)}` : ""}
+                  </span>
+                </div>
+                <div className="mt-3 flex items-center gap-3">
+                  <span className="meta w-16 shrink-0">POINTS</span>
+                  <div className="h-2 flex-1 rounded bg-border-light">
+                    <div
+                      className="h-2 rounded bg-gold"
+                      style={{ width: `${Math.max(2, Math.round(((s.points ?? 0) / maxPoints) * 100))}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {/* ── Visual comparison: systems at a glance ── */}
       {systemSummary.length > 0 ? (
         <section className="space-y-4">
@@ -414,12 +511,23 @@ export default function BenchmarkPage() {
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="text-sm text-ivory">{s.system}</span>
                   <span className="meta">
-                    {s.success === null ? "— success" : `${Math.round(s.success * 100)}% success`}
+                    {s.points === null ? "— pts" : `${Math.round(s.points)} pts`}
+                    {s.success === null ? " · — success" : ` · ${Math.round(s.success * 100)}% success`}
+                    {s.quality !== null ? ` · Q ${s.quality.toFixed(2)}` : ""}
                     {s.tokens !== null ? ` · ${fmt(s.tokens)} tok/task` : ""}
                     {s.latency !== null ? ` · p50 ${fmt(s.latency)}ms` : ""}
                   </span>
                 </div>
                 <div className="mt-3 space-y-2">
+                  <div className="flex items-center gap-3">
+                    <span className="meta w-16 shrink-0">POINTS</span>
+                    <div className="h-2 flex-1 rounded bg-border-light">
+                      <div
+                        className="h-2 rounded bg-gold"
+                        style={{ width: `${Math.max(2, Math.round(((s.points ?? 0) / maxPoints) * 100))}%` }}
+                      />
+                    </div>
+                  </div>
                   <div className="flex items-center gap-3">
                     <span className="meta w-16 shrink-0">SUCCESS</span>
                     <div className="h-2 flex-1 rounded bg-border-light">
@@ -456,7 +564,7 @@ export default function BenchmarkPage() {
 
       {/* ── Investor table: systems × classes ── */}
       <section className="space-y-4">
-        <p className="meta">SUCCESS RATE · p50 LATENCY · AVG TOKENS · LEVEL · COST</p>
+        <p className="meta">POINTS · SUCCESS RATE · p50 LATENCY · AVG TOKENS · QUALITY · COST</p>
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full min-w-[720px] text-left text-sm">
             <thead>
@@ -479,6 +587,9 @@ export default function BenchmarkPage() {
                       <td key={classId} className="px-4 py-3 align-top text-ivory-faint">
                         {agg ? (
                           <div className="space-y-0.5">
+                            <p className={cn("font-medium", (cellPoints(agg) ?? 0) >= 70 ? "success-text" : (cellPoints(agg) ?? 0) >= 40 ? "text-warning-text" : "danger-text")}>
+                              {pts(cellPoints(agg))}
+                            </p>
                             <p className={cn("font-medium", agg.taskSuccessRate === 1 ? "success-text" : agg.taskSuccessRate === 0 ? "danger-text" : "text-warning-text")}>
                               {pct(agg.taskSuccessRate)} success
                             </p>
@@ -486,7 +597,7 @@ export default function BenchmarkPage() {
                               {fmt(agg.p50LatencyMs)}ms · {fmt(agg.avgTokensPerTask)} tok
                             </p>
                             <p className="meta">
-                              {agg.avgIntelligenceLevel === null ? "—" : `L${agg.avgIntelligenceLevel.toFixed(1)}`} · ${fmt(agg.totalCost, 4)}
+                              Q {agg.avgQualityScore === null ? "—" : agg.avgQualityScore.toFixed(2)} · {agg.avgIntelligenceLevel === null ? "—" : `L${agg.avgIntelligenceLevel.toFixed(1)}`} · ${fmt(agg.totalCost, 4)}
                             </p>
                           </div>
                         ) : (
@@ -530,10 +641,10 @@ export default function BenchmarkPage() {
           </button>
           {showRecords ? (
             <div className="overflow-x-auto rounded-lg border border-border">
-              <table className="w-full min-w-[760px] text-left text-sm">
+              <table className="w-full min-w-[840px] text-left text-sm">
                 <thead>
                   <tr className="border-b border-border bg-surface">
-                    {["SYSTEM", "CLASS", "MODE", "SUCCESS", "VERIFY", "TOK (in/out)", "LATENCY", "LEVEL", "COST"].map((h) => (
+                    {["SYSTEM", "CLASS", "MODE", "SUCCESS", "VERIFY", "QUALITY", "TOK (in/out)", "LATENCY", "LEVEL", "COST"].map((h) => (
                       <th key={h} className="meta px-3 py-2.5 font-normal">{h}</th>
                     ))}
                   </tr>
@@ -551,6 +662,9 @@ export default function BenchmarkPage() {
                         {record.success ? "PASS" : "FAIL"}
                       </td>
                       <td className="meta px-3 py-2">{record.verificationStatus}</td>
+                      <td className="meta px-3 py-2">
+                        {record.qualityScore === null || record.qualityScore === undefined ? "—" : record.qualityScore.toFixed(2)}
+                      </td>
                       <td className="meta px-3 py-2">
                         {record.inputTokens ?? "—"}/{record.outputTokens ?? "—"}
                       </td>

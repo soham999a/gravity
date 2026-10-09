@@ -115,6 +115,9 @@ export interface BenchmarkAggregate {
   avgTokensPerTask: number | null;
   avgModelCallsPerTask: number | null;
   avgIntelligenceLevel: number | null;
+  /** Mean of measured qualityScore (0..1) across records that have one.
+   *  Null when no record in the group measured quality — never fabricated. */
+  avgQualityScore: number | null;
   escalationRate: number | null;
   verificationPassRate: number | null;
   decisionEfficiency: number | null;
@@ -204,6 +207,12 @@ export function aggregateRecords(records: BenchmarkRecord[]): BenchmarkAggregate
   const levels = records
     .map((record) => record.intelligenceLevel)
     .filter((level): level is number => level !== null);
+  // Quality points: mean of MEASURED qualityScore only (jury score for
+  // GRAVITY runs where the judge fired, scaled length-credit for baselines).
+  // Null when nothing in the group measured it — the UI renders "—".
+  const qualities = records
+    .map((record) => record.qualityScore)
+    .filter((q): q is number => typeof q === "number" && Number.isFinite(q));
   const escalations = records.reduce((sum, record) => sum + record.escalations, 0);
   const verifications = records.filter(
     (record) => record.verificationStatus !== "SKIPPED",
@@ -248,6 +257,8 @@ export function aggregateRecords(records: BenchmarkRecord[]): BenchmarkAggregate
         : null,
     avgIntelligenceLevel:
       levels.length > 0 ? levels.reduce((a, b) => a + b, 0) / levels.length : null,
+    avgQualityScore:
+      qualities.length > 0 ? qualities.reduce((a, b) => a + b, 0) / qualities.length : null,
     escalationRate: records.length > 0 ? escalations / records.length : null,
     verificationPassRate:
       verifications.length > 0 ? verificationPasses.length / verifications.length : null,
