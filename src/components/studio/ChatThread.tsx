@@ -41,7 +41,7 @@ export function ChatThread({ onRequireAuth, authed }: { onRequireAuth: () => voi
   };
 
   return (
-    <div className="grid gap-4 md:grid-cols-[220px_1fr]">
+    <div className="chat-bone grid gap-4 md:grid-cols-[220px_1fr]">
       {/* ── Sidebar ── */}
       <aside className="rounded-lg border border-border bg-surface p-3">
         <button

@@ -5299,4 +5299,337 @@
   color: #e05d5d;
 }
 
+/* ============================================================
+   Chat surface — bone-white scoped theme + rich message fabric.
+   Scoped under .chat-bone: the studio shell stays dark, only the
+   ChatThread (sidebar + bubbles + input) renders bone. Nothing
+   outside .chat-bone is affected.
+   Palette: bone #F5F1E8 · paper #FFFDF7 · ink #201D17 ·
+   muted #6E675C · line #E3DCCB · gold-deep #8A6F09.
+   ============================================================ */
+.chat-bone > aside,
+.chat-bone > div {
+  background: #f5f1e8;
+  border-color: #e3dccb;
+}
+/* Text tones on bone */
+.chat-bone .text-ivory {
+  color: #201d17;
+}
+.chat-bone .text-ivory-faint {
+  color: #6e675c;
+}
+.chat-bone .meta {
+  color: #6e675c;
+}
+.chat-bone .text-gold {
+  color: #8a6f09;
+}
+/* User bubble → ink pill; active thread → ink pill */
+.chat-bone .bg-gold-pale {
+  background: #201d17;
+}
+.chat-bone .bg-gold-pale.text-ivory,
+.chat-bone .bg-gold-pale .text-ivory {
+  color: #f5f1e8;
+}
+.chat-bone .bg-gold-pale .meta {
+  color: #b8b0a1;
+}
+.chat-bone .bg-gold-pale .bg-gold {
+  background: #b8960c;
+}
+/* Assistant bubble → paper card (nested only; the thread panel stays bone) */
+.chat-bone .border-border-light {
+  border-color: #e3dccb;
+}
+.chat-bone > div div.rounded-lg.border {
+  background: #fffdf7;
+}
+/* Input + buttons on bone */
+.chat-bone input {
+  background: #fffdf7;
+  border-color: #d8d0bd;
+  color: #201d17;
+}
+.chat-bone input::placeholder {
+  color: #a39a87;
+}
+.chat-bone input:disabled {
+  background: #efe9da;
+}
+.chat-bone .studio-secondary-button {
+  border-color: #d8d0bd;
+  color: #6e675c;
+  background: #fffdf7;
+}
+.chat-bone .studio-secondary-button:hover {
+  border-color: #8a6f09;
+  color: #8a6f09;
+}
+.chat-bone .danger-text {
+  color: #a32e2e;
+}
+
+/* --- Rich markdown fabric inside bone chat --- */
+.chat-bone .studio-md {
+  color: #3d382e;
+}
+.chat-bone .studio-md h1,
+.chat-bone .studio-md h2,
+.chat-bone .studio-md h3,
+.chat-bone .studio-md h4,
+.chat-bone .studio-md h5,
+.chat-bone .studio-md strong,
+.chat-bone .studio-md em {
+  color: #201d17;
+}
+.chat-bone .studio-md a {
+  color: #8a6f09;
+}
+.chat-bone .studio-md a:hover {
+  color: #201d17;
+}
+.chat-bone .studio-md li::marker {
+  color: #8a6f09;
+}
+.chat-bone .studio-md code {
+  background: #efe9da;
+  border-color: #e3dccb;
+  color: #7a2e1d;
+}
+.chat-bone .studio-md pre {
+  background: #201d17;
+  border-color: #201d17;
+}
+.chat-bone .studio-md pre code {
+  background: transparent;
+  border: 0;
+  color: #f5f1e8;
+}
+.chat-bone .studio-md blockquote {
+  border-left-color: #b8960c;
+  color: #6e675c;
+  background: #efe9da;
+  padding: 8px 0 8px 14px;
+}
+.chat-bone .studio-md hr {
+  border-top-color: #e3dccb;
+}
+.chat-bone .studio-md th {
+  border-bottom-color: #d8d0bd;
+  color: #6e675c;
+  background: #efe9da;
+}
+.chat-bone .studio-md td {
+  border-bottom-color: #e9e2d2;
+}
+.chat-bone .studio-md tr:nth-child(even) td {
+  background: #faf6ec;
+}
+
+/* ============================================================
+   Rich message fabric — global upgrades for .studio-md (both
+   themes): task lists, table polish, kbd, nested lists.
+   ============================================================ */
+.studio-md ul.contains-task-list,
+.studio-md ol.contains-task-list {
+  list-style: none;
+  padding-left: 4px;
+}
+.studio-md li.task-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.studio-md li.task-list-item > input[type="checkbox"] {
+  margin-top: 5px;
+  accent-color: var(--color-gold);
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  cursor: default;
+}
+.studio-md table {
+  display: block;
+  overflow-x: auto;
+}
+.studio-md tbody tr {
+  transition: background 0.15s ease;
+}
+.studio-md tbody tr:hover td {
+  background: rgba(184, 150, 12, 0.06);
+}
+.studio-md ul ul,
+.studio-md ol ol,
+.studio-md ul ol,
+.studio-md ol ul {
+  margin-bottom: 0;
+}
+.studio-md del {
+  opacity: 0.55;
+}
+.studio-md kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--color-border-light);
+  border-bottom-width: 2px;
+  background: var(--color-surface);
+  color: var(--color-ivory-dim);
+}
+.chat-bone .studio-md kbd {
+  border-color: #d8d0bd;
+  background: #efe9da;
+  color: #201d17;
+}
+
+/* ============================================================
+   Chat popup — dark frame + bone body mix. Overlay sits below
+   the auth gate (z 60 vs 95) so sign-in always wins.
+   ============================================================ */
+.chat-popup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+/* `hidden` must win over the overlay positioning (persistent mount). */
+.chat-popup-overlay[hidden] {
+  display: none;
+}
+.chat-popup-overlay-scrim {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(4, 4, 4, 0.72);
+  backdrop-filter: blur(6px);
+  animation: dialog-fade 0.2s ease both;
+  transition: background 0.25s ease;
+}
+/* Cinema dim when expanded */
+.chat-popup-overlay-scrim:has(.chat-popup-max) {
+  background: rgba(2, 2, 2, 0.86);
+}
+.chat-popup {
+  width: min(100%, 880px);
+  max-height: min(88vh, 780px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #101010;
+  border: 1px solid #2a2a2a;
+  border-top: 2px solid var(--color-gold);
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.6);
+  animation: chat-popup-rise 0.24s ease both;
+  transition: width 0.25s ease, max-height 0.25s ease;
+}
+.chat-popup-max {
+  width: min(96vw, 1400px);
+  max-height: 94vh;
+}
+@media (min-width: 768px) {
+  /* Roomier sidebar when expanded */
+  .chat-popup-max .chat-bone {
+    grid-template-columns: 260px 1fr;
+  }
+}
+/* Taller thread scroll area when expanded */
+.chat-popup-max .chat-bone .max-h-\[50vh\] {
+  max-height: min(66vh, 620px);
+}
+/* Gold focus ring on the popup input */
+.chat-popup-body input:focus {
+  outline: none;
+  border-color: var(--color-gold);
+  box-shadow: 0 0 0 2px rgba(184, 150, 12, 0.25);
+}
+@keyframes chat-popup-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.chat-popup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  background: #101010;
+  border-bottom: 1px solid #2a2a2a;
+  flex-shrink: 0;
+}
+.chat-popup-eyebrow {
+  color: #b8b0a1;
+}
+.chat-popup-title {
+  margin-top: 2px;
+  font-size: 14px;
+  color: var(--color-ivory);
+}
+.chat-popup-close {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  color: var(--color-ivory-faint);
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+.chat-popup-close:hover {
+  border-color: var(--color-gold);
+  color: var(--color-gold);
+}
+.chat-popup-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.chat-popup-hint {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: #6e675c;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  padding: 4px 8px;
+  user-select: none;
+}
+.chat-popup-body {
+  overflow-y: auto;
+  padding: 16px;
+  background: #e9e2d2;
+  flex: 1;
+}
+/* Popup thread breathes taller than the old inline slot */
+.chat-popup-body .chat-bone > aside,
+.chat-popup-body .chat-bone > div {
+  border-color: #d8d0bd;
+  box-shadow: 0 1px 0 rgba(32, 29, 23, 0.04);
+}
+@media (max-width: 640px) {
+  .chat-popup-overlay-scrim {
+    padding: 0;
+    place-items: stretch;
+  }
+  .chat-popup {
+    width: 100%;
+    max-height: 100dvh;
+    height: 100dvh;
+    border: 0;
+    border-top: 2px solid var(--color-gold);
+  }
+}
+
+
 

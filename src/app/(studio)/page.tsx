@@ -11,7 +11,11 @@ import {
   FileText,
   Gauge,
   Layers,
+  Maximize2,
+  MessageCircle,
+  Minimize2,
   Timer,
+  X,
   Zap,
 } from "lucide-react";
 import { onAuthStateChanged } from "firebase/auth";
@@ -118,6 +122,39 @@ function HomeContent() {
   const [authOpen, setAuthOpen] = React.useState(false);
   const [pendingRun, setPendingRun] = React.useState<{ prompt: string; files?: CsvFile[]; imageModel?: string } | null>(null);
   const [mode, setMode] = React.useState<"mission" | "chat">("mission");
+  // Chat lives in a popup (bone + dark mix) — same ChatThread, same work.
+  // Always mounted (hidden when closed) so streams + threads survive closing.
+  const [chatOpen, setChatOpen] = React.useState(false);
+  const [chatMax, setChatMax] = React.useState(false);
+  const chatPopupRef = React.useRef<HTMLDivElement>(null);
+
+  const focusChatInput = React.useCallback(() => {
+    requestAnimationFrame(() => {
+      chatPopupRef.current?.querySelector("input")?.focus();
+    });
+  }, []);
+
+  // Giant-grade keys: Cmd/Ctrl+K toggles chat from anywhere, ESC closes
+  // (but never hijacks the chat input's own ESC-to-stop).
+  React.useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const mod = event.metaKey || event.ctrlKey;
+      if (mod && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setChatOpen((was) => {
+          if (!was) setMode("chat");
+          return !was;
+        });
+        focusChatInput();
+        return;
+      }
+      if (chatOpen && event.key === "Escape" && !(event.target instanceof HTMLInputElement)) {
+        setChatOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [chatOpen, focusChatInput]);
   // Simulator pairs: original run ↔ forced-strategy re-run, for side-by-side compare.
   const [simPairs, setSimPairs] = React.useState<{ original: string; simulated: string; strategy: string | null }[]>([]);
 
@@ -303,14 +340,15 @@ function HomeContent() {
             <div className="mb-3 flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setMode("mission")}
+                onClick={() => { setMode("mission"); setChatOpen(false); }}
                 className={mode === "mission" ? "studio-primary-button px-4 py-1.5" : "studio-secondary-button px-4 py-1.5"}
               >
                 Create
               </button>
               <button
                 type="button"
-                onClick={() => setMode("chat")}
+                onClick={() => { setMode("chat"); setChatOpen(true); focusChatInput(); }}
+                title="Open chat (Ctrl/⌘+K)"
                 className={mode === "chat" ? "studio-primary-button px-4 py-1.5" : "studio-secondary-button px-4 py-1.5"}
               >
                 Chat
@@ -335,10 +373,16 @@ function HomeContent() {
                 ) : null}
               </>
             ) : (
-              <ChatThread
-                authed={isAuthed}
-                onRequireAuth={() => setAuthOpen(true)}
-              />
+              <div className="rounded-lg border border-border bg-surface p-4 text-center">
+                <p className="text-sm text-ivory">Chat lives in its popup — threads, streaming, retry, all of it.</p>
+                <button
+                  type="button"
+                  onClick={() => { setChatOpen(true); focusChatInput(); }}
+                  className="studio-primary-button mt-3 px-4 py-2"
+                >
+                  <MessageCircle className="size-3.5" /> Reopen chat
+                </button>
+              </div>
             )}
             <div className="mt-4 flex items-center gap-3">
               <span className="studio-meta">
@@ -349,7 +393,54 @@ function HomeContent() {
 
           <RightSideVisualField />
         </div>
-      </section>      <AuthModal
+      </section>      <div
+        ref={chatPopupRef}
+        className="chat-popup-overlay"
+        hidden={!chatOpen}
+        aria-hidden={!chatOpen}
+      >
+        <div
+          className="chat-popup-overlay-scrim"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setChatOpen(false);
+          }}
+        >
+          <div className={`chat-popup${chatMax ? " chat-popup-max" : ""}`} role="dialog" aria-modal="true" aria-label="GRAVITY chat">
+            <div className="chat-popup-head" onDoubleClick={() => setChatMax((v) => !v)} title="Double-click to maximize">
+              <div>
+                <p className="meta chat-popup-eyebrow">GRAVITY CHAT</p>
+                <p className="chat-popup-title">Quick answers — streams like chat.</p>
+              </div>
+              <div className="chat-popup-actions">
+                <span className="chat-popup-hint" title="Ctrl/⌘+K toggles chat · ESC closes">CTRL K · ESC</span>
+                <button
+                  type="button"
+                  className="chat-popup-close"
+                  onClick={() => setChatMax((v) => !v)}
+                  aria-label={chatMax ? "Restore chat size" : "Maximize chat"}
+                >
+                  {chatMax ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+                </button>
+                <button
+                  type="button"
+                  className="chat-popup-close"
+                  onClick={() => setChatOpen(false)}
+                  aria-label="Close chat"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+            </div>
+            <div className="chat-popup-body">
+              <ChatThread
+                authed={isAuthed}
+                onRequireAuth={() => setAuthOpen(true)}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+      <AuthModal
         open={authOpen}
         onClose={() => {
           setAuthOpen(false);
