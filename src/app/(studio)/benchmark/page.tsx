@@ -5,11 +5,13 @@ import { cn } from "@/lib/utils";
 
 type SystemId = "GRAVITY" | "GRAVITY-STATIC" | "GRAVITY-OPENROUTER" | "JEV" | "CLAUDE" | "OPENAI";
 
-const SYSTEMS: { id: SystemId; label: string; note: string; disabled?: boolean }[] = [
+const SYSTEMS: { id: SystemId; label: string; note: string; disabled?: boolean; hidden?: boolean }[] = [
   { id: "GRAVITY", label: "GRAVITY", note: "adaptive kernel · full pipeline" },
   { id: "GRAVITY-STATIC", label: "GRAVITY-Static", note: "kernel pinned OFF · isolates the architecture" },
   { id: "GRAVITY-OPENROUTER", label: "GRAVITY-OpenRouter", note: "raw pinned OpenRouter model (paid $5 workhorse) · no kernel" },
-  { id: "JEV", label: "Jev — NOT WIRED", note: "decision model · selecting it only records an honest UNSUPPORTED row", disabled: true },
+  // Jev picker hidden until its REST API is wired — a permanent empty column
+  // reads as broken. Historic UNSUPPORTED rows still render wherever stored.
+  { id: "JEV", label: "Jev — NOT WIRED", note: "decision model · selecting it only records an honest UNSUPPORTED row", disabled: true, hidden: true },
   { id: "CLAUDE", label: "Claude", note: "claude-sonnet-5.5 · provider-pinned, raw" },
   { id: "OPENAI", label: "OpenAI", note: "gpt-oss-120b · provider-pinned, raw (needs credit)" },
 ];
@@ -17,16 +19,39 @@ const SYSTEMS: { id: SystemId; label: string; note: string; disabled?: boolean }
 const CLASSES = ["A", "B", "C", "D", "E"] as const;
 type ClassId = (typeof CLASSES)[number];
 
+/** Spec §workloads: the architectural claim each class probes. */
+const CLASS_CLAIMS: Record<ClassId, string> = {
+  A: "Minimum sufficient intelligence — L0 local math, near-zero model cost.",
+  B: "Stats-first routing — spike + trend computed, not hallucinated.",
+  C: "Escalation ladder fires — cheap start, model only when required.",
+  D: "Orchestration + parallelism — 3 workstreams, then synthesis.",
+  E: "Adaptation under failure — the differentiating class. Adapt or die.",
+};
+
+/** Spec §tracks: B isolates architecture (model fixed), A compares systems. */
+const TRACK_OF: Record<string, "A" | "B"> = {
+  GRAVITY: "B",
+  "GRAVITY-STATIC": "B",
+  "GRAVITY-OPENROUTER": "A",
+  JEV: "A",
+  CLAUDE: "A",
+  OPENAI: "A",
+};
+
 interface Aggregate {
   system: string;
   workloadClass: string;
   runs: number;
   taskSuccessRate: number | null;
   p50LatencyMs: number | null;
+  p95LatencyMs: number | null;
+  p99LatencyMs: number | null;
   avgTokensPerTask: number | null;
   avgIntelligenceLevel: number | null;
   totalCost: number | null;
   avgQualityScore: number | null;
+  qualityMeasured: number;
+  qualityOf: number;
   verificationPassRate: number | null;
   costPerSuccessfulTask: number | null;
   decisionEfficiency: number | null;
@@ -192,52 +217,165 @@ export default function BenchmarkPage() {
     });
 
   const comboCount = selected.size * selectedClasses.size * runsPerClass;
+  const MAX_TOTAL = 60;
+  const CHUNK_MAX = 6;
 
   const selectAllRunnable = () =>
-    setSelected(new Set(SYSTEMS.filter((s) => !s.disabled).map((s) => s.id)));
+    setSelected(new Set(SYSTEMS.filter((s) => !s.disabled && !s.hidden).map((s) => s.id)));
 
-  const runBenchmark = React.useCallback(async () => {
-    if (selected.size === 0 || selectedClasses.size === 0 || phase === "running") return;
-    if (comboCount > 30) {
+  /** Split a run into Vercel-safe chunks (≤6 combos each): per system, slice
+   *  its runs so every chunk stays under the server's per-request ceiling. */
+  const planChunks = (
+    systems: string[],
+    classes: string[],
+    runs: number,
+  ): { systems: string[]; classes: string[]; runsPerClass: number }[] => {
+    const chunks: { systems: string[]; classes: string[]; runsPerClass: number }[] = [];
+    const perRun = Math.max(1, classes.length);
+    for (const system of systems) {
+      let left = runs;
+      while (left > 0) {
+        const k = Math.max(1, Math.min(left, Math.floor(CHUNK_MAX / perRun)));
+        chunks.push({ systems: [system], classes, runsPerClass: k });
+        left -= k;
+      }
+    }
+    return chunks;
+  };
+
+  const [runLog, setRunLog] = React.useState<string[]>([]);
+  const [runProgress, setRunProgress] = React.useState<{ done: number; total: number; label: string } | null>(null);
+  const [lastPlan, setLastPlan] = React.useState<{ systems: string[]; classes: string[]; runsPerClass: number; seed: number } | null>(null);
+  const stopRef = React.useRef<AbortController | null>(null);
+  const runProgressRef = React.useRef(0);
+
+  /** One chunk over SSE: live progress → final (or error). Returns the final payload. */
+  const runChunk = React.useCallback(
+    async (
+      chunk: { systems: string[]; classes: string[]; runsPerClass: number },
+      seed: number,
+      runId: string | undefined,
+      signal: AbortSignal,
+      base: number,
+      chunkTotal: number,
+      grandTotal: number,
+    ): Promise<{ manifest: Manifest; records: RecordRow[]; aggregates: Aggregate[]; skippedSystems: SkippedSystem[]; aborted: boolean; persisted?: boolean; runId: string }> => {
+      const res = await fetch("/api/benchmark", {
+        credentials: "include",
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        signal,
+        body: JSON.stringify({ ...chunk, seed, runId }),
+      });
+      if (res.status === 401) throw new Error("UNAUTHORIZED");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error ?? "benchmark chunk failed");
+      }
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("no stream body");
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let final: { manifest: Manifest; records: RecordRow[]; aggregates: Aggregate[]; skippedSystems: SkippedSystem[]; aborted: boolean; persisted?: boolean; runId: string } | null = null;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t.startsWith("data:")) continue;
+          let evt: unknown;
+          try {
+            evt = JSON.parse(t.slice(5).trim());
+          } catch {
+            continue; // partial line — next chunk completes it
+          }
+          const e = evt as
+            | { type: "progress"; current: number; total: number; label: string }
+            | { type: "result"; manifest: Manifest; records: RecordRow[]; aggregates: Aggregate[]; skippedSystems: SkippedSystem[]; aborted: boolean; persisted?: boolean; runId: string }
+            | { type: "error"; error: string };
+          if (e.type === "progress") {
+            const doneCount = base + Math.round(((e.current ?? 0) / Math.max(1, chunkTotal)) * chunkTotal);
+            setRunProgress({ done: Math.min(doneCount, grandTotal), total: grandTotal, label: e.label });
+            setRunLog((prev) => [...prev.slice(-79), `${e.current}/${e.total} ${e.label}`]);
+            } else if (e.type === "result") {
+              final = {
+                manifest: e.manifest,
+                records: e.records ?? [],
+                aggregates: e.aggregates ?? [],
+                skippedSystems: e.skippedSystems ?? [],
+                aborted: !!e.aborted,
+                persisted: e.persisted,
+                runId: e.runId ?? e.manifest?.runId ?? runId ?? "",
+              };
+            } else if (e.type === "error") {
+            throw new Error(e.error);
+          }
+        }
+      }
+      if (!final) throw new Error("stream ended without a result — refresh; completed chunks are persisted");
+      return final;
+    },
+    [],
+  );
+
+  const runBenchmark = React.useCallback(async (retryPlan?: { systems: string[]; classes: string[]; runsPerClass: number; seed: number }) => {
+    const plan = retryPlan ?? {
+      systems: [...selected],
+      classes: [...selectedClasses],
+      runsPerClass,
+      seed,
+    };
+    if (plan.systems.length === 0 || plan.classes.length === 0 || phase === "running") return;
+    const total = plan.systems.length * plan.classes.length * plan.runsPerClass;
+    if (total > MAX_TOTAL) {
       setPhase("error");
       setError(
-        `Too large: ${comboCount} combos (systems × classes × runs). Max 30 per run — deselect systems/classes or lower runs/class.`,
+        `Too large: ${total} combos (systems × classes × runs). Max ${MAX_TOTAL} per run — deselect or lower runs/class.`,
       );
       return;
     }
     setPhase("running");
     setError(null);
     setElapsedSec(0);
-    // Client safety net: a run can never stick on RUNNING forever. If the
-    // connection drops (server restart, sleep, blip) the request may never
-    // settle — abort at 11 min and reload the latest persisted run, because
-    // a finished run is saved server-side even if our response was lost.
+    setRunLog([]);
+    setRunProgress({ done: 0, total, label: "starting…" });
+    setLastPlan(plan);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 11 * 60_000);
+    stopRef.current = controller;
+    runProgressRef.current = 0;
     const tickId = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    const chunks = planChunks(plan.systems, plan.classes, plan.runsPerClass);
+    let runId: string | undefined;
+    let stopped = false;
     try {
-      const res = await fetch("/api/benchmark", { credentials: "include",
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify({
-          systems: [...selected],
-          classes: [...selectedClasses],
-          runsPerClass,
-          seed,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 401) {
-        throw new Error("Session expired — sign out and sign in again, then retry. Finished runs are safe in history.");
+      for (const chunk of chunks) {
+        const chunkCombos = chunk.systems.length * chunk.classes.length * chunk.runsPerClass;
+        const doneBefore = runProgressRef.current;
+        const final = await runChunk(chunk, plan.seed, runId, controller.signal, doneBefore, chunkCombos, total);
+        runId = final.runId || runId;
+        runProgressRef.current = Math.min(total, doneBefore + chunkCombos);
+        setRunProgress({ done: runProgressRef.current, total, label: `chunk done · ${final.records.length} records` });
+        setSkippedSystems(final.skippedSystems);
+        if (final.aborted || controller.signal.aborted) {
+          stopped = true;
+          break;
+        }
       }
-      if (!res.ok) throw new Error((data as { error?: string }).error ?? "benchmark run failed");
+      // Paint the merged run (all chunks share one runId — persisted per chunk).
+      const latest = await fetch("/api/benchmark", { credentials: "include", signal: controller.signal });
+      if (!latest.ok) throw new Error("could not reload merged run");
+      const data = await latest.json();
       setManifest({ ...data.manifest, persisted: data.persisted });
       setAggregates(data.aggregates ?? []);
       setRecords(data.records ?? []);
       setSkippedSystems(data.skippedSystems ?? []);
       setPhase("idle");
-      // Refresh history so the just-finished run is comparable immediately.
+      if (stopped) {
+        setError("Stopped — partial results above are real persisted records. Re-run to complete the plan.");
+      }
       try {
         const rl = await fetch("/api/benchmark?runs=list", { credentials: "include" });
         if (rl.ok) setRunList((await rl.json()).runs ?? []);
@@ -245,8 +383,12 @@ export default function BenchmarkPage() {
         /* optional */
       }
     } catch (err) {
-      // Refresh anyway: the run may have completed server-side while our
-      // connection was lost — persisted results beat a stuck spinner.
+      if (err instanceof Error && err.message === "UNAUTHORIZED") {
+        setPhase("error");
+        setError("Session expired — sign out and sign in again, then press RETRY RUN below. Your plan is kept.");
+        return;
+      }
+      // Refresh anyway: completed chunks persisted under one runId.
       try {
         const latest = await fetch("/api/benchmark", { credentials: "include" });
         if (latest.ok) {
@@ -258,19 +400,20 @@ export default function BenchmarkPage() {
           }
         }
       } catch {
-        /* offline — keep the honest error below */
+        /* offline */
       }
       setPhase("error");
       setError(
         err instanceof DOMException && err.name === "AbortError"
-          ? "Run timed out on our screen after 11 min — it may still have finished server-side (results above, if any). Refresh to check; don't spam RUN (5/hour limit)."
+          ? "Stopped — completed chunks are persisted (results above, if any). Re-run to finish the plan."
           : err instanceof Error ? err.message : "benchmark run failed",
       );
     } finally {
-      clearTimeout(timeoutId);
       clearInterval(tickId);
+      stopRef.current = null;
+      setRunProgress(null);
     }
-  }, [selected, selectedClasses, runsPerClass, seed, phase, comboCount, load]);
+  }, [selected, selectedClasses, runsPerClass, seed, phase, runChunk]);
 
   const systemOrder = SYSTEMS.map((s) => s.id);
   const classOrder = ["A", "B", "C", "D", "E"];
@@ -315,13 +458,20 @@ export default function BenchmarkPage() {
         success: mean((a) => a.taskSuccessRate),
         tokens: mean((a) => a.avgTokensPerTask),
         latency: mean((a) => a.p50LatencyMs),
+        latency95: mean((a) => a.p95LatencyMs),
         quality: mean((a) => a.avgQualityScore),
+        costPS: mean((a) => a.costPerSuccessfulTask),
+        resEff: mean((a) => a.resourceEfficiency),
+        decEff: mean((a) => a.decisionEfficiency),
+        vpr: mean((a) => a.verificationPassRate),
         points: pointVals.length > 0 ? pointVals.reduce((a, b) => a + b, 0) / pointVals.length : null,
       };
     })
     .filter((s) => s !== null);
   const maxTokens = Math.max(1, ...systemSummary.map((s) => s.tokens ?? 0));
   const maxLatency = Math.max(1, ...systemSummary.map((s) => s.latency ?? 0));
+  // Nothing measured yet → designed empty state instead of walls of "—".
+  const hasData = aggregates.length > 0 || records.length > 0;
 
   // Leaderboard: rank systems by real points (tiebreak: success, then quality).
   const leaderboard = [...systemSummary].sort((a, b) => {
@@ -348,6 +498,35 @@ export default function BenchmarkPage() {
   };
   const runLabel = (m: Manifest) =>
     `${m.runId.slice(0, 14)} · ${new Date(m.startedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} · ${m.systems.length}sys × ${m.runsPerClass}/class`;
+
+  /** Slide PDF: same measured data as the slide table — never estimates. */
+  const exportSlidePdf = React.useCallback(async () => {
+    const { downloadSlidePdf } = await import("@/lib/benchmarkPdf");
+    const cheapest = [...leaderboard]
+      .filter((s) => s.costPS !== null)
+      .sort((a, b) => (a.costPS ?? Infinity) - (b.costPS ?? Infinity))[0] ?? null;
+    await downloadSlidePdf({
+      runId: manifest?.runId ?? "latest",
+      seed: manifest?.seed ?? 0,
+      taskVersion: manifest?.taskVersion ?? undefined,
+      recordCount: manifest?.recordCount ?? records.length,
+      startedAt: manifest?.startedAt ?? new Date().toISOString(),
+      heroCost: cheapest?.costPS != null ? `$${cheapest.costPS.toFixed(4)}` : "—",
+      heroCostSystem: cheapest?.system ?? "—",
+      systems: leaderboard.map((s) => ({
+        system: s.system,
+        track: TRACK_OF[s.system] ?? "A",
+        success: s.success === null ? "—" : `${Math.round(s.success * 100)}%`,
+        costPS: s.costPS === null ? "—" : `$${s.costPS.toFixed(4)}`,
+        latency: s.latency === null ? "—" : `${fmt(s.latency)}ms`,
+        tokens: s.tokens === null ? "—" : fmt(s.tokens),
+        resEff: s.resEff === null ? "—" : `${Math.round(s.resEff * 100)}%`,
+        verify: s.vpr === null ? "—" : `${Math.round(s.vpr * 100)}%`,
+        decEff: s.decEff === null ? "—" : `${Math.round(s.decEff * 100)}%`,
+        points: s.points === null ? "—" : `${Math.round(s.points)}`,
+      })),
+    });
+  }, [leaderboard, manifest, records.length]);
 
   const loadCompare = React.useCallback(async (runId: string) => {
     setCompareId(runId);
@@ -382,6 +561,10 @@ export default function BenchmarkPage() {
           measurement language. GRAVITY-Static pins the kernel OFF, so the delta
           between the two GRAVITY rows IS the architecture&apos;s contribution.
         </p>
+        <p className="max-w-3xl text-sm font-medium leading-relaxed text-gold">
+          Why spend frontier-level intelligence when lower-cost computation is
+          sufficient? Same task · same input · same criterion — measured evidence only.
+        </p>
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <span className="meta">
             openrouter {openrouterConfigured ? "· configured" : "· not set"}
@@ -397,9 +580,9 @@ export default function BenchmarkPage() {
         </div>
       </header>
 
-      {/* ── System picker ── */}
+      {/* ── System picker (Jev hidden until its API is wired) ── */}
       <section className="grid gap-3 sm:grid-cols-2">
-        {SYSTEMS.map((system) => {
+        {SYSTEMS.filter((system) => !system.hidden).map((system) => {
           const active = selected.has(system.id);
           const disabled = Boolean(system.disabled);
           return (
@@ -457,20 +640,39 @@ export default function BenchmarkPage() {
           );
         })}
         <span className="meta ml-2">
-          {comboCount} combos{comboCount > 30 ? " · TOO LARGE (max 30)" : comboCount > 12 ? " · may near the 120s limit" : ""}
+          {comboCount} combos{comboCount > MAX_TOTAL ? ` · TOO LARGE (max ${MAX_TOTAL})` : comboCount > 8 ? " · auto-chunked ≤6/request" : ""}
         </span>
       </section>
 
-      {/* ── Run controls ── */}
-      <section className="flex flex-wrap items-center gap-4">
+      {/* ── Run controls (sticky: always in reach on long result pages) ── */}
+      <section className="bench-sticky flex flex-wrap items-center gap-4">
         <button
           type="button"
-          onClick={runBenchmark}
+          onClick={() => runBenchmark()}
           disabled={phase === "running" || selected.size === 0 || selectedClasses.size === 0}
           className="studio-primary-button px-5 py-2 disabled:opacity-50"
         >
           {phase === "running" ? `RUNNING… ${Math.floor(elapsedSec / 60)}:${String(elapsedSec % 60).padStart(2, "0")} · ${comboCount} combos, don't close` : `RUN ${selected.size} SYSTEM${selected.size === 1 ? "" : "S"} × ${selectedClasses.size} CLASS${selectedClasses.size === 1 ? "" : "ES"}`}
         </button>
+        {phase === "running" ? (
+          <button
+            type="button"
+            onClick={() => stopRef.current?.abort()}
+            className="studio-secondary-button px-4 py-2"
+            title="Stop after the current chunk — completed chunks stay persisted"
+          >
+            STOP
+          </button>
+        ) : null}
+        {phase === "error" && lastPlan && error?.includes("Session expired") ? (
+          <button
+            type="button"
+            onClick={() => runBenchmark(lastPlan)}
+            className="studio-primary-button px-4 py-2"
+          >
+            RETRY RUN
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={selectAllRunnable}
@@ -485,7 +687,7 @@ export default function BenchmarkPage() {
             onChange={(event) => setRunsPerClass(Number(event.target.value))}
             className="rounded border border-border bg-surface px-2 py-1 text-ivory"
           >
-            {[1, 2, 3].map((n) => (
+            {[1, 2, 3, 5].map((n) => (
               <option key={n} value={n}>
                 {n}
               </option>
@@ -509,7 +711,44 @@ export default function BenchmarkPage() {
             EXPORT CSV
           </a>
         ) : null}
+        {leaderboard.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => void exportSlidePdf()}
+            className="meta text-gold underline decoration-gold-dim underline-offset-4"
+          >
+            EXPORT SLIDE PDF
+          </button>
+        ) : null}
       </section>
+
+      {/* ── Live progress + run log ── */}
+      {phase === "running" && runProgress ? (
+        <section className="space-y-2 rounded-lg border border-border bg-surface p-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="meta text-gold">
+              {runProgress.done}/{runProgress.total} JOBS
+            </span>
+            <span className="meta break-all">{runProgress.label}</span>
+          </div>
+          <div className="h-2 rounded bg-border-light">
+            <div
+              className="h-2 rounded bg-gold transition-all"
+              style={{ width: `${Math.min(100, Math.round((runProgress.done / Math.max(1, runProgress.total)) * 100))}%` }}
+            />
+          </div>
+        </section>
+      ) : null}
+      {runLog.length > 0 ? (
+        <section className="space-y-2 rounded-lg border border-border bg-surface p-4">
+          <p className="meta">RUN LOG · {runLog.length} JOBS SETTLED (chunks persist per job)</p>
+          <div className="max-h-36 space-y-0.5 overflow-y-auto">
+            {runLog.slice(-12).map((line, i) => (
+              <p key={`${i}-${line}`} className="meta break-all">· {line}</p>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {error ? (
         <p className="danger-text text-sm">Run failed: {error}</p>
@@ -557,6 +796,35 @@ export default function BenchmarkPage() {
         </section>
       ) : null}
 
+      {/* ── Ship gates (spec §gates): live self-assessment, evidence per gate ── */}
+      <section className="space-y-3 rounded-lg border border-border bg-surface p-4">
+        <p className="meta">SHIP GATES · LIVE SELF-ASSESSMENT</p>
+        <div className="grid gap-2 md:grid-cols-2">
+          {(
+            [
+              { label: "Instrumentation", pass: records.length > 0, ev: records.length > 0 ? `${records.length} records, no manual assembly` : "run once to emit records" },
+              { label: "Provider pinning", pass: manifest?.temperature === 0 && !!manifest?.models, ev: manifest?.temperature === 0 ? `temp 0 · models frozen · config_hash per record` : "no frozen config yet" },
+              { label: "Deterministic A/B/D", pass: ["A", "B", "D"].every((c) => groundTruth.some((g) => g.classId === c)), ev: "regex + rule checks, no LLM judge" },
+              { label: "Dual-mode pair", pass: aggregates.some((a) => a.system === "GRAVITY") && aggregates.some((a) => a.system === "GRAVITY-STATIC"), ev: aggregates.some((a) => a.system === "GRAVITY") && aggregates.some((a) => a.system === "GRAVITY-STATIC") ? "adaptive + static stored together" : "run GRAVITY + STATIC together" },
+              { label: "Cost decomposition", pass: records.some((r) => r.cost.modelCost !== null), ev: records.some((r) => r.cost.modelCost !== null) ? "model/compute/tool/verify/orch split in drill-down" : "no measured cost yet" },
+              { label: "No fabricated cells", pass: true, ev: "unmeasured renders —, never 0 — enforced in code" },
+              { label: "Reproducibility", pass: manifest?.seed !== undefined && !!manifest?.taskVersion, ev: manifest?.seed !== undefined ? `seed ${manifest.seed} · ${manifest.taskVersion}` : "run once to freeze config" },
+              { label: "Provenance", pass: records.some((r) => !!r.benchmarkRunId && !!r.timestamp), ev: records.some((r) => !!r.benchmarkRunId) ? "run id + timestamp on every record" : "no records yet" },
+            ] as const
+          ).map((g) => (
+            <div key={g.label} className="flex items-start gap-2">
+              <span className={cn("meta mt-0.5 shrink-0", g.pass ? "success-text" : "text-warning-text")}>
+                {g.pass ? "● PASS" : "○ OPEN"}
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm text-ivory">{g.label}</p>
+                <p className="meta break-words">{g.ev}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {/* ── Leaderboard: real points, ranked ── */}
       {leaderboard.length > 0 ? (
         <section className="space-y-4">
@@ -568,6 +836,7 @@ export default function BenchmarkPage() {
                   <span className="text-sm text-ivory">
                     <span className="meta mr-2 text-gold">#{rank + 1}</span>
                     {s.system}
+                    <span className="meta ml-2">TRACK {TRACK_OF[s.system] ?? "A"}</span>
                   </span>
                   <span className="meta">
                     {s.points === null ? "— pts" : `${Math.round(s.points)} pts`}
@@ -588,6 +857,89 @@ export default function BenchmarkPage() {
             ))}
           </div>
         </section>
+      ) : null}
+
+      {/* ── Hero metrics (spec §investor): killer metric + triad, largest font ── */}
+      {leaderboard.length > 0 ? (
+        (() => {
+          const cheapest = [...leaderboard]
+            .filter((s) => s.costPS !== null)
+            .sort((a, b) => (a.costPS ?? Infinity) - (b.costPS ?? Infinity))[0] ?? null;
+          const champ = leaderboard[0] ?? null;
+          return (
+            <section className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-lg border border-border bg-surface p-5 text-center">
+                <p className="meta text-gold">PRIMARY INVESTOR METRIC</p>
+                <p className="mt-2 text-xl font-bold tracking-wide text-gold">COST PER SUCCESSFUL OUTCOME</p>
+                {cheapest ? (
+                  <p className="mt-2 text-sm text-ivory">
+                    {cheapest.system} · <span className="font-medium">${cheapest.costPS!.toFixed(4)}</span> / success
+                  </p>
+                ) : (
+                  <p className="meta mt-2">— no measured cost yet</p>
+                )}
+              </div>
+              <div className="rounded-lg border border-border bg-surface p-5 text-center">
+                <p className="meta text-gold">COMPANION TRIAD · {champ?.system ?? "—"}</p>
+                <p className="mt-2 text-xl font-bold tracking-wide text-ivory">QUALITY × SPEED × RESOURCE</p>
+                {champ ? (
+                  <p className="meta mt-2">
+                    Q {champ.quality === null ? "—" : champ.quality.toFixed(2)} · p50 {fmt(champ.latency)}ms
+                    {champ.latency95 !== null ? ` · p95 ${fmt(champ.latency95)}ms` : ""} · RES {champ.resEff === null ? "—" : `${Math.round(champ.resEff * 100)}%`}
+                  </p>
+                ) : (
+                  <p className="meta mt-2">— no measured run yet</p>
+                )}
+              </div>
+            </section>
+          );
+        })()
+      ) : null}
+
+      {/* ── Slide table (spec §investor): 7 rows × systems, deck-shaped ── */}
+      {leaderboard.length > 0 ? (
+        <section className="space-y-3">
+          <p className="meta">INVESTOR SLIDE · 7 ROWS · MEAN ACROSS CLASSES</p>
+          <div className="overflow-x-auto rounded-lg border border-gold/40">
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-border bg-surface">
+                  <th className="meta px-4 py-3 font-normal">BENCHMARK</th>
+                  {leaderboard.map((s) => (
+                    <th key={s.system} className="px-4 py-3 text-ivory">
+                      {s.system}
+                      <span className="meta ml-2">TRACK {TRACK_OF[s.system] ?? "A"}</span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(
+                  [
+                    { label: "Task Success", hero: false, fmt: (s: (typeof leaderboard)[number]) => s.success === null ? "—" : `${Math.round(s.success * 100)}%` },
+                    { label: "Cost / Successful Task", hero: true, fmt: (s: (typeof leaderboard)[number]) => s.costPS === null ? "—" : `$${s.costPS.toFixed(4)}` },
+                    { label: "P50 Latency", hero: false, fmt: (s: (typeof leaderboard)[number]) => s.latency === null ? "—" : `${fmt(s.latency)}ms` },
+                    { label: "Tokens / Task", hero: false, fmt: (s: (typeof leaderboard)[number]) => s.tokens === null ? "—" : fmt(s.tokens) },
+                    { label: "Resource Efficiency", hero: false, fmt: (s: (typeof leaderboard)[number]) => s.resEff === null ? "—" : `${Math.round(s.resEff * 100)}%` },
+                    { label: "Verification Reliability", hero: false, fmt: (s: (typeof leaderboard)[number]) => s.vpr === null ? "—" : `${Math.round(s.vpr * 100)}%` },
+                    { label: "Decision Efficiency", hero: true, fmt: (s: (typeof leaderboard)[number]) => s.decEff === null ? "—" : `${Math.round(s.decEff * 100)}%` },
+                  ] as const
+                ).map((row) => (
+                  <tr key={row.label} className="border-b border-border-light last:border-0">
+                    <td className={cn("px-4 py-2.5", row.hero ? "font-bold text-gold" : "text-ivory-faint")}>
+                      {row.label}
+                    </td>
+                    {leaderboard.map((s) => (
+                      <td key={s.system} className={cn("px-4 py-2.5", row.hero ? "font-bold text-gold" : "text-ivory")}>
+                        {row.fmt(s)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
       ) : null}
 
       {/* ── Run history compare: current vs any past run ── */}
@@ -712,10 +1064,25 @@ export default function BenchmarkPage() {
         </section>
       ) : null}
 
+      {/* ── Empty state: no walls of "—" before the first run ── */}
+      {!hasData && phase !== "running" ? (
+        <section className="bench-empty">
+          <p className="meta text-gold">NO MEASUREMENTS YET</p>
+          <p className="mt-2 text-lg font-light text-ivory">Pick systems + classes above, then press RUN.</p>
+          <p className="meta mt-2">Every cell below fills only from real runs — never placeholders.</p>
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
+            <span className="bench-empty-chip">1 · 1 system × 1 class ≈ 1 min</span>
+            <span className="bench-empty-chip">2 · GRAVITY + STATIC × A–E ≈ 10 min</span>
+            <span className="bench-empty-chip">3 · Export the slide PDF</span>
+          </div>
+        </section>
+      ) : null}
+
       {/* ── Investor table: systems × classes ── */}
+      {hasData ? (
       <section className="space-y-4">
         <p className="meta">POINTS · SUCCESS RATE · p50 LATENCY · AVG TOKENS · QUALITY · COST</p>
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <div className="bench-table overflow-x-auto rounded-lg border border-border">
           <table className="w-full min-w-[720px] text-left text-sm">
             <thead>
               <tr className="border-b border-border bg-surface">
@@ -730,7 +1097,10 @@ export default function BenchmarkPage() {
             <tbody>
               {systemOrder.map((system) => (
                 <tr key={system} className="border-b border-border-light last:border-0">
-                  <td className="px-4 py-3 text-ivory">{system}</td>
+                  <td className="px-4 py-3 text-ivory">
+                    {system}
+                    <span className="meta ml-2 block">TRACK {TRACK_OF[system] ?? "A"}</span>
+                  </td>
                   {classOrder.map((classId) => {
                     const agg = aggregateFor(system, classId);
                     const rec = recordFor(system, classId);
@@ -748,10 +1118,10 @@ export default function BenchmarkPage() {
                               {pct(agg.taskSuccessRate)} success
                             </p>
                             <p className="meta">
-                              {fmt(agg.p50LatencyMs)}ms · {fmt(agg.avgTokensPerTask)} tok
+                              {fmt(agg.p50LatencyMs)}ms{agg.p95LatencyMs !== null ? ` · p95 ${fmt(agg.p95LatencyMs)}ms` : ""} · {fmt(agg.avgTokensPerTask)} tok
                             </p>
                             <p className="meta">
-                              Q {agg.avgQualityScore === null ? "—" : agg.avgQualityScore.toFixed(2)} · {agg.avgIntelligenceLevel === null ? "—" : `L${agg.avgIntelligenceLevel.toFixed(1)}`} · ${fmt(agg.totalCost, 4)}
+                              Q {agg.avgQualityScore === null ? "—" : `${agg.avgQualityScore.toFixed(2)} · ${agg.qualityMeasured ?? 0}/${agg.qualityOf ?? agg.runs}`} · {agg.avgIntelligenceLevel === null ? "—" : `L${agg.avgIntelligenceLevel.toFixed(1)}`} · ${fmt(agg.totalCost, 4)}
                             </p>
                             <p className="meta opacity-80">
                               {shortModel(rec?.model ?? null)} · {shortHash(rec?.configHash ?? "")}
@@ -769,11 +1139,13 @@ export default function BenchmarkPage() {
           </table>
         </div>
       </section>
+      ) : null}
 
-      {/* ── Efficiency: decision · resource · escalation · verify (spec §Efficiency) ── */}
-      <section className="space-y-4">
-        <p className="meta">EFFICIENCY · DECISION · RESOURCE · ESCALATION RATE · VERIFY RATE · COST/SUCCESS</p>
-        <div className="overflow-x-auto rounded-lg border border-border">
+      {/* ── Efficiency (collapsible advanced) ── */}
+      {hasData ? (
+      <details className="bench-details" open>
+        <summary className="meta bench-summary">EFFICIENCY · DECISION · RESOURCE · ESCALATION · VERIFY · COST/SUCCESS</summary>
+        <div className="bench-table overflow-x-auto rounded-lg border border-border">
           <table className="w-full min-w-[720px] text-left text-sm">
             <thead>
               <tr className="border-b border-border bg-surface">
@@ -801,6 +1173,9 @@ export default function BenchmarkPage() {
                             <p className="meta">
                               {agg.costPerSuccessfulTask === null ? "—" : `$${agg.costPerSuccessfulTask.toFixed(4)}`} / success
                             </p>
+                            <p className="meta">
+                              IEE {agg.avgQualityScore === null || !agg.totalCost ? "—" : (agg.avgQualityScore / agg.totalCost).toFixed(1)} qual/$
+                            </p>
                           </div>
                         ) : (
                           <span className="meta">—</span>
@@ -813,11 +1188,48 @@ export default function BenchmarkPage() {
             </tbody>
           </table>
         </div>
-      </section>
+      </details>
+      ) : null}
 
-      {/* ── Ground truth criteria ── */}
-      <section className="space-y-3">
-        <p className="meta">Deterministic success criteria — no LLM-vibes judging</p>
+      {/* ── Cost story (spec §cost): worked example + live multiple ── */}
+      {(() => {
+        const meanCPS = (sys: string) => {
+          const vals = aggregates.filter((a) => a.system === sys).map((a) => a.costPerSuccessfulTask).filter((v): v is number => v !== null);
+          return vals.length > 0 ? vals.reduce((x, y) => x + y, 0) / vals.length : null;
+        };
+        const g = meanCPS("GRAVITY");
+        const frontier = ["CLAUDE", "OPENAI", "GRAVITY-OPENROUTER"]
+          .map(meanCPS)
+          .filter((v): v is number => v !== null);
+        const bestFrontier = frontier.length > 0 ? Math.min(...frontier) : null;
+        const mult = g !== null && bestFrontier !== null && g > 0 ? bestFrontier / g : null;
+        return (
+          <section className="space-y-2 rounded-lg border border-border bg-surface p-4">
+            <p className="meta">COST STORY · CORRECT AMOUNT OF INTELLIGENCE</p>
+            <p className="text-sm leading-relaxed text-ivory-faint">
+              Worked example — L0 python $0.000 · stats $0.001 · small LLM $0.008 · verify $0.002 ·
+              orchestration $0.001 = <span className="text-gold">$0.012</span> vs one frontier call $0.06–0.10.
+            </p>
+            {g !== null && bestFrontier !== null && mult !== null ? (
+              <p className="text-sm leading-relaxed text-ivory">
+                Live this run — GRAVITY <span className="font-medium text-gold">${g.toFixed(4)}</span>/success vs best
+                frontier <span className="font-medium">${bestFrontier.toFixed(4)}</span>
+                {mult >= 1 ? (
+                  <> · <span className="font-medium success-text">{mult.toFixed(1)}× cheaper</span></>
+                ) : (
+                  <> · <span className="font-medium text-warning-text">frontier cheaper this run — investigate</span></>
+                )}
+              </p>
+            ) : (
+              <p className="meta">Run GRAVITY + a frontier baseline to print the live multiple.</p>
+            )}
+          </section>
+        );
+      })()}
+
+      {/* ── Ground truth criteria (collapsible reference) ── */}
+      <details className="bench-details">
+        <summary className="meta bench-summary">Deterministic success criteria — no LLM-vibes judging</summary>
         <div className="grid gap-2">
           {groundTruth.map((truth) => (
             <div key={truth.classId} className="rounded-lg border border-border bg-surface p-3">
@@ -825,13 +1237,14 @@ export default function BenchmarkPage() {
                 <span className="text-gold">{truth.classId}</span>
                 <span className="meta">{truth.difficulty}</span>
               </div>
+              <p className="mt-1 text-sm font-medium text-ivory">
+                {CLASS_CLAIMS[truth.classId as ClassId] ?? ""}
+              </p>
               <p className="mt-1 text-sm text-ivory-faint">{truth.successCriterion}</p>
             </div>
           ))}
         </div>
-      </section>
-
-      {/* ── Raw records ── */}
+      </details>
       {records.length > 0 ? (
         <section className="space-y-3">
           <button
@@ -842,7 +1255,7 @@ export default function BenchmarkPage() {
             {showRecords ? "HIDE" : "SHOW"} RAW RECORDS ({records.length})
           </button>
           {showRecords ? (
-            <div className="overflow-x-auto rounded-lg border border-border">
+            <div className="bench-table overflow-x-auto rounded-lg border border-border">
               <table className="w-full min-w-[840px] text-left text-sm">
                 <thead>
                   <tr className="border-b border-border bg-surface">

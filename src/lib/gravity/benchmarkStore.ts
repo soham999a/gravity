@@ -37,25 +37,48 @@ export async function saveBenchmarkRun(
   manifest: BenchmarkRunManifest,
   records: BenchmarkRecord[],
 ): Promise<{ runId: string; persisted: boolean; recordCount: number }> {
-  memRuns.set(manifest.runId, manifest);
+  return appendToRun(manifest, records);
+}
+
+/**
+ * Append-mode persistence for chunked runs: merges the chunk manifest into
+ * the stored one (systems/classes union, recordCount sum, completedAt now)
+ * and writes the chunk's records. First chunk creates the run.
+ */
+export async function appendToRun(
+  chunk: BenchmarkRunManifest,
+  records: BenchmarkRecord[],
+): Promise<{ runId: string; persisted: boolean; recordCount: number }> {
+  const prev = memRuns.get(chunk.runId);
+  const merged: BenchmarkRunManifest = prev
+    ? {
+        ...prev,
+        systems: [...new Set([...prev.systems, ...chunk.systems])],
+        workloadClasses: [...new Set([...prev.workloadClasses, ...chunk.workloadClasses])],
+        runsPerClass: Math.max(prev.runsPerClass, chunk.runsPerClass),
+        recordCount: prev.recordCount + records.length,
+        completedAt: new Date().toISOString(),
+      }
+    : { ...chunk, recordCount: records.length };
+  memRuns.set(chunk.runId, merged);
   memRecords.unshift(...records);
   if (memRecords.length > 5000) memRecords.length = 5000;
 
   if (useFirestore()) {
     try {
       const batch = adminDb.batch();
-      batch.set(adminDb.collection(RUNS).doc(manifest.runId), manifest);
+      batch.set(adminDb.collection(RUNS).doc(chunk.runId), merged, { merge: true });
       for (const record of records) {
         const id = `${record.benchmarkRunId}_${record.system}_${record.workloadClass}_${record.taskId}_${record.timestamp}`;
         batch.set(adminDb.collection(RECORDS).doc(id), record);
       }
       await fs(() => batch.commit());
-      return { runId: manifest.runId, persisted: true, recordCount: records.length };
+      return { runId: chunk.runId, persisted: true, recordCount: merged.recordCount };
     } catch (err) {
       console.warn("[benchmark-store] Firestore write failed, in-memory only:", String(err).slice(0, 160));
     }
   }
-  return { runId: manifest.runId, persisted: false, recordCount: records.length };
+  return { runId: chunk.runId, persisted: false, recordCount: merged.recordCount };
 }
 
 export async function listBenchmarkRuns(limit = 20): Promise<BenchmarkRunManifest[]> {

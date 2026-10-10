@@ -51,6 +51,12 @@ export interface RunnerOptions {
   runsPerClass?: number;
   seed?: number;
   onProgress?: (progress: RunnerProgress) => void;
+  /** Cooperative cancellation: stops the queue, abandons queued jobs, and
+   *  discards late results. In-flight pipeline jobs run to their own
+   *  deadlines (bounded) but their records are dropped, never persisted. */
+  signal?: AbortSignal;
+  /** Append mode (chunked runs): reuse this runId instead of minting one. */
+  runId?: string;
 }
 
 export interface RunnerResult {
@@ -59,6 +65,39 @@ export interface RunnerResult {
   aggregates: BenchmarkAggregate[];
   /** Systems requested but honestly skipped (e.g. JEV not wired). */
   skippedSystems: { system: BenchmarkSystem; reason: string }[];
+  /** True when cancellation stopped the run early (partial records). */
+  aborted: boolean;
+}
+
+/** Process-wide class-E mutex. The injected-failure flag is global one-shot
+ *  state — E jobs from ANY concurrent run must serialize around
+ *  set→execute→clear or parallel runs steal each other's failure. */
+let eMutex: Promise<void> = Promise.resolve();
+
+function runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+  const run = eMutex.then(fn, fn);
+  // Keep the chain alive even if a job rejects.
+  eMutex = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+class AbortedError extends Error {
+  constructor() {
+    super("benchmark run aborted");
+    this.name = "AbortedError";
+  }
+}
+
+/** Adapters throw plain Errors named AbortedError (no import cycle) — match both. */
+function isAbort(err: unknown, signal?: AbortSignal): boolean {
+  return (
+    err instanceof AbortedError ||
+    (err instanceof Error && err.name === "AbortedError") ||
+    signal?.aborted === true
+  );
 }
 
 const ALL_CLASS_IDS: WorkloadClassId[] = ["A", "B", "C", "D", "E"];
@@ -81,18 +120,19 @@ async function dispatchAdapter(
   system: BenchmarkSystem,
   def: WorkloadClassDef,
   runId: string,
+  signal?: AbortSignal,
 ): Promise<BenchmarkRecord> {
   switch (system) {
     case "GRAVITY":
-      return runGravityTask(true, def, runId);
+      return runGravityTask(true, def, runId, signal);
     case "GRAVITY-STATIC":
-      return runGravityTask(false, def, runId);
+      return runGravityTask(false, def, runId, signal);
     case "GRAVITY-OPENROUTER":
-      return runPinnedBaselineTask("GRAVITY-OPENROUTER", def, runId);
+      return runPinnedBaselineTask("GRAVITY-OPENROUTER", def, runId, signal);
     case "CLAUDE":
-      return runPinnedBaselineTask("CLAUDE", def, runId);
+      return runPinnedBaselineTask("CLAUDE", def, runId, signal);
     case "OPENAI":
-      return runPinnedBaselineTask("OPENAI", def, runId);
+      return runPinnedBaselineTask("OPENAI", def, runId, signal);
     case "JEV":
       return runJevTask(def, runId);
   }
@@ -122,10 +162,11 @@ export async function runBenchmark(options: RunnerOptions = {}): Promise<RunnerR
   const seed = options.seed ?? 42;
   const rand = seededRandom(seed); // bookkeeping parity with manifest; task order stays frozen per spec
   void rand;
-  const runId = `bench-${seed}-${Date.now().toString(36)}`;
+  const runId = options.runId ?? `bench-${seed}-${Date.now().toString(36)}`;
   const startedAt = new Date().toISOString();
   const records: BenchmarkRecord[] = [];
   const skippedSystems: RunnerResult["skippedSystems"] = [];
+  let aborted = false;
 
   const taskDefs = loadTaskDefs(classes).map(freezeTask);
   const total = taskDefs.length * runsPerClass * systems.length;
@@ -163,6 +204,7 @@ export async function runBenchmark(options: RunnerOptions = {}): Promise<RunnerR
 
   async function runOneJob(job: Job): Promise<BenchmarkRecord> {
     const { def, run, system } = job;
+    if (options.signal?.aborted) throw new AbortedError();
     current += 1;
     options.onProgress?.({
       current,
@@ -178,14 +220,15 @@ export async function runBenchmark(options: RunnerOptions = {}): Promise<RunnerR
         });
       }
       // Still run the stub so the record shows the honest UNSUPPORTED error.
-      const stubRecord = await dispatchAdapter(system, def, runId);
+      const stubRecord = await dispatchAdapter(system, def, runId, options.signal);
       return mergeVerdict(stubRecord, evaluateRecord(def.id, stubRecord));
     }
 
     // Box 2 → Box 3 → Box 4, with a per-task timeout so one hung LLM call
     // can't wedge the whole run into a Vercel timeout with zero records.
     const work = (async () => {
-      const record = await dispatchAdapter(system, def, runId);
+      const record = await dispatchAdapter(system, def, runId, options.signal);
+      if (options.signal?.aborted) throw new AbortedError();
       const verdict = evaluateRecord(def.id, record);
       return mergeVerdict(record, verdict);
     })();
@@ -250,26 +293,55 @@ export async function runBenchmark(options: RunnerOptions = {}): Promise<RunnerR
     return Promise.race([work, timeout]);
   }
 
-  // Limited-concurrency pool for non-E jobs.
-  const out: BenchmarkRecord[] = new Array(allJobs.length);
+  // Limited-concurrency pool for non-E jobs. Abort-aware: workers stop
+  // pulling the moment cancellation lands; in-flight jobs race their own
+  // timeout and their late results are discarded below, never persisted.
+  const out: (BenchmarkRecord | null)[] = new Array(allJobs.length).fill(null);
   const jobIndex = new Map(allJobs.map((j, i) => [j, i]));
   async function worker(queue: Job[]) {
     while (queue.length > 0) {
+      if (options.signal?.aborted) {
+        aborted = true;
+        return;
+      }
       const job = queue.shift()!;
-      out[jobIndex.get(job)!] = await runOneJob(job);
+      try {
+        out[jobIndex.get(job)!] = await runOneJob(job);
+      } catch (err) {
+        if (isAbort(err, options.signal)) {
+          aborted = true;
+          return;
+        }
+        throw err;
+      }
     }
   }
   const queue = [...parallelJobs];
   await Promise.all(
     Array.from({ length: Math.min(CONCURRENCY, queue.length) }, () => worker(queue)),
   );
-  // Class E strictly serial, in original order.
+  // Class E strictly serial, in original order — inside the process-wide
+  // mutex so concurrent runs can't steal each other's injected failure.
   for (const job of serialJobs) {
-    out[jobIndex.get(job)!] = await runOneJob(job);
+    if (options.signal?.aborted) {
+      aborted = true;
+      break;
+    }
+    try {
+      out[jobIndex.get(job)!] = await runExclusive(() => runOneJob(job));
+    } catch (err) {
+      if (isAbort(err, options.signal)) {
+        aborted = true;
+        break;
+      }
+      throw err;
+    }
   }
-  // Reassemble in the original frozen task order (A→E).
+  // Reassemble in the original frozen task order (A→E), dropping nulls
+  // (aborted or never-started jobs leave no fake rows).
   for (const job of allJobs) {
-    records.push(out[jobIndex.get(job)!]!);
+    const rec = out[jobIndex.get(job)!];
+    if (rec) records.push(rec);
   }
 
   const manifest: BenchmarkRunManifest = {
@@ -301,7 +373,7 @@ export async function runBenchmark(options: RunnerOptions = {}): Promise<RunnerR
     ) as BenchmarkRunManifest["models"],
   };
 
-  return { manifest, records, aggregates: groupAggregates(records), skippedSystems };
+  return { manifest, records, aggregates: groupAggregates(records), skippedSystems, aborted };
 }
 
 /** Group records by (system, class) and aggregate each group (Lab UI table). */

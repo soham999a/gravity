@@ -114,6 +114,8 @@ export async function POST(request: Request) {
     classes?: string[];
     runsPerClass?: number;
     seed?: number;
+    /** Append mode: chunk of a larger run — reuses this runId. */
+    runId?: string;
   };
 
   const systems = (body.systems ?? []).filter((system): system is BenchmarkSystem =>
@@ -132,44 +134,112 @@ export async function POST(request: Request) {
   const classes = (body.classes ?? ["A", "B", "C", "D", "E"]).filter((entry) =>
     ["A", "B", "C", "D", "E"].includes(entry),
   ) as ("A" | "B" | "C" | "D" | "E")[];
-  const runsPerClass = Math.min(Math.max(body.runsPerClass ?? 1, 1), 3);
+  const runsPerClass = Math.min(Math.max(body.runsPerClass ?? 1, 1), 10);
   const seed = typeof body.seed === "number" ? body.seed : 42;
+  const appendRunId = typeof body.runId === "string" && body.runId.length > 0 ? body.runId : undefined;
 
-  // Fail fast before burning LLM budget / serverless seconds.
+  // Chunk guard: one request stays Vercel-safe (≤8 combos ≈ under 120s).
+  // The client chains chunks with a shared runId; the run total caps at 60.
   const combos = systems.length * classes.length * runsPerClass;
-  if (combos > 30) {
+  if (combos > 8) {
     return NextResponse.json(
-      { error: `Too large: ${combos} combos (systems × classes × runs). Max 30 per run — pick fewer systems/classes or runsPerClass=1.` },
+      { error: `Chunk too large: ${combos} combos. Max 8 per request — the Lab splits runs into chunks automatically.` },
       { status: 400 },
     );
   }
   if (classes.length === 0) {
     return NextResponse.json({ error: "pick at least one class: A, B, C, D, E" }, { status: 400 });
   }
-
-  const progress: RunnerProgress[] = [];
-  try {
-    const result = await runBenchmark({
-      systems,
-      classes,
-      runsPerClass,
-      seed,
-      onProgress: (p) => {
-        progress.push(p);
-        console.log(`[benchmark] ${p.current}/${p.total} ${p.label}`);
-      },
-    });
-    const persisted = await saveBenchmarkRun(result.manifest, result.records);
-    return NextResponse.json({
-      ...result,
-      ...persisted,
-      progress,
-    });
-  } catch (err) {
-    console.error("[benchmark] run failed:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Benchmark run failed" },
-      { status: 500 },
-    );
+  if (appendRunId) {
+    const existing = await getBenchmarkRun(appendRunId);
+    const total = (existing.manifest?.recordCount ?? 0) + combos;
+    if (total > 60) {
+      return NextResponse.json(
+        { error: `Run would reach ${total} combos (max 60 per run). Start a fresh run.` },
+        { status: 400 },
+      );
+    }
   }
+
+  const wantSSE = (request.headers.get("accept") ?? "").includes("text/event-stream");
+  const progress: RunnerProgress[] = [];
+  const logProgress = (p: RunnerProgress) => {
+    progress.push(p);
+    console.log(`[benchmark] ${p.current}/${p.total} ${p.label}`);
+  };
+
+  if (!wantSSE) {
+    try {
+      const payload = await runBenchmark({
+        systems,
+        classes,
+        runsPerClass,
+        seed,
+        runId: appendRunId,
+        signal: request.signal,
+        onProgress: logProgress,
+      }).then(async (result) => {
+        const persisted = await saveBenchmarkRun(result.manifest, result.records);
+        return { ...result, ...persisted, progress };
+      });
+      return NextResponse.json(payload);
+    } catch (err) {
+      console.error("[benchmark] run failed:", err);
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : "Benchmark run failed" },
+        { status: 500 },
+      );
+    }
+  }
+
+  // SSE transport: the run executes INSIDE the stream so progress events are
+  // truly live. Persist-before-final keeps disconnects safe; errors arrive as
+  // {type:"error"} since headers are already sent.
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (obj: unknown) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+        } catch {
+          /* client gone */
+        }
+      };
+      try {
+        const result = await runBenchmark({
+          systems,
+          classes,
+          runsPerClass,
+          seed,
+          runId: appendRunId,
+          signal: request.signal,
+          onProgress: (p) => {
+            logProgress(p);
+            send({ type: "progress", ...p });
+          },
+        });
+        const persisted = await saveBenchmarkRun(result.manifest, result.records);
+        send({ type: "result", ...result, ...persisted, progress });
+      } catch (err) {
+        console.error("[benchmark] run failed:", err);
+        send({ type: "error", error: err instanceof Error ? err.message : "Benchmark run failed" });
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
+      }
+    },
+    cancel() {
+      // Client STOP → request.signal aborts → runner discards the queue.
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    },
+  });
 }

@@ -142,6 +142,7 @@ export async function runGravityTask(
   adaptive: boolean,
   def: WorkloadClassDef,
   runId: string,
+  signal?: AbortSignal,
 ): Promise<BenchmarkRecord> {
   const system: BenchmarkSystem = adaptive ? "GRAVITY" : "GRAVITY-STATIC";
   const rec = recordSkeleton(system, def, runId, "ADAPTIVE");
@@ -165,6 +166,14 @@ export async function runGravityTask(
     const receipt = (await runWorkloadClass(def, {
       routing: adaptive ? "adaptive" : "static",
     })) as ReceiptShape;
+    // Abandoned by cancellation: the mission may still settle in the
+    // background (bounded by its own deadlines) but this record is dropped
+    // by the runner and never persisted — no ghost rows.
+    if (signal?.aborted) {
+      const err = new Error("benchmark run aborted");
+      err.name = "AbortedError";
+      throw err;
+    }
     rec.latencyMs = Date.now() - t0;
 
     // Decision trace → GRAVITY-specific record fields.
@@ -222,6 +231,7 @@ interface BaselineOutcome {
 async function pinnedCall(
   system: "CLAUDE" | "OPENAI" | "GRAVITY-OPENROUTER",
   prompt: string,
+  signal?: AbortSignal,
 ): Promise<BaselineOutcome> {
   const model =
     system === "CLAUDE"
@@ -240,6 +250,7 @@ async function pinnedCall(
       maxTokens: PINNED_CONFIG.MAX_TOKENS,
       temperature: PINNED_CONFIG.TEMPERATURE,
       timeoutMs: 55_000,
+      signal,
       onDelta: () => undefined,
     });
     return {
@@ -273,6 +284,7 @@ export async function runPinnedBaselineTask(
   system: "CLAUDE" | "OPENAI" | "GRAVITY-OPENROUTER",
   def: WorkloadClassDef,
   runId: string,
+  signal?: AbortSignal,
 ): Promise<BenchmarkRecord> {
   const runMode: RunMode = "STATIC";
   const rec = recordSkeleton(system, def, runId, runMode);
@@ -295,7 +307,7 @@ export async function runPinnedBaselineTask(
   });
   rec.successCriterion = GROUND_TRUTH[def.id]?.successCriterion ?? "Deterministic output check on the raw response.";
 
-  const call = await pinnedCall(system, def.prompt);
+  const call = await pinnedCall(system, def.prompt, signal);
   rec.latencyMs = call.latencyMs;
   rec.ttftMs = call.ttftMs;
   rec.inputTokens = call.inputTokens;

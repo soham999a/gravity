@@ -118,6 +118,10 @@ export interface BenchmarkAggregate {
   /** Mean of measured qualityScore (0..1) across records that have one.
    *  Null when no record in the group measured quality — never fabricated. */
   avgQualityScore: number | null;
+  /** Quality coverage: how many of the group's records measured quality.
+   *  Display as "Q 0.81 · 3/5" so sparse jury coverage reads honestly. */
+  qualityMeasured: number;
+  qualityOf: number;
   escalationRate: number | null;
   verificationPassRate: number | null;
   decisionEfficiency: number | null;
@@ -259,6 +263,8 @@ export function aggregateRecords(records: BenchmarkRecord[]): BenchmarkAggregate
       levels.length > 0 ? levels.reduce((a, b) => a + b, 0) / levels.length : null,
     avgQualityScore:
       qualities.length > 0 ? qualities.reduce((a, b) => a + b, 0) / qualities.length : null,
+    qualityMeasured: qualities.length,
+    qualityOf: records.length,
     escalationRate: records.length > 0 ? escalations / records.length : null,
     verificationPassRate:
       verifications.length > 0 ? verificationPasses.length / verifications.length : null,
