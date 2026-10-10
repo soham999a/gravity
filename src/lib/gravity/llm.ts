@@ -88,6 +88,8 @@ export interface LLMResult {
   costUsd?: number | null;
   /** Attempts spent across the retry/fallback plan (senior's attempt telemetry). */
   attempts?: number;
+  /** Time-to-first-token in ms (streaming only) — null when unmeasured. */
+  ttftMs?: number | null;
 }
 
 export interface ChatTurn {
@@ -579,6 +581,7 @@ export async function streamOpenRouter(
       let text = "";
       let served = model;
       let usage: { prompt_tokens?: number; completion_tokens?: number } | null = null;
+      let ttftMs: number | null = null;
       try {
         for (;;) {
           if (opts.signal?.aborted) throw new Error("OPENROUTER_ABORTED");
@@ -603,6 +606,7 @@ export async function streamOpenRouter(
             if (event.usage) usage = event.usage;
             const delta = event.choices?.[0]?.delta?.content;
             if (delta) {
+              if (ttftMs === null) ttftMs = Date.now() - started;
               text += delta;
               opts.onDelta(delta);
             }
@@ -624,6 +628,7 @@ export async function streamOpenRouter(
         attempts: attempt + 1,
         inputTokens: inputTokens ?? undefined,
         costUsd: estimateCostUsd(served, inputTokens, outputTokens, 0),
+        ttftMs,
       };
     } catch (err) {
       if (err instanceof Error && err.message === "OPENROUTER_ABORTED") throw err;

@@ -30,6 +30,18 @@ interface Aggregate {
   verificationPassRate: number | null;
   costPerSuccessfulTask: number | null;
   decisionEfficiency: number | null;
+  resourceEfficiency: number | null;
+  escalationRate: number | null;
+  avgModelCallsPerTask: number | null;
+}
+
+interface CostBreakdown {
+  modelCost: number | null;
+  computeCost: number | null;
+  toolCost: number | null;
+  verificationCost: number | null;
+  orchestrationCost: number | null;
+  totalCost: number | null;
 }
 
 interface RecordRow {
@@ -37,14 +49,24 @@ interface RecordRow {
   workloadClass: string;
   runMode: string;
   model: string | null;
+  provider: string | null;
   success: boolean;
   verificationStatus: string;
   qualityScore: number | null;
+  difficulty: string;
+  configHash: string;
+  timestamp: string;
   inputTokens: number | null;
   outputTokens: number | null;
   latencyMs: number;
+  ttftMs: number | null;
   intelligenceLevel: number | null;
-  cost: { totalCost: number | null };
+  modelCalls: number;
+  toolCalls: number;
+  retries: number;
+  escalations: number;
+  cost: CostBreakdown;
+  metadata: Record<string, unknown> | null;
   benchmarkRunId: string;
 }
 
@@ -111,6 +133,12 @@ export default function BenchmarkPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [showRecords, setShowRecords] = React.useState(false);
   const [elapsedSec, setElapsedSec] = React.useState(0);
+  const [expanded, setExpanded] = React.useState<string | null>(null);
+  // Run history A/B compare (store holds every run; page used to show latest only).
+  const [runList, setRunList] = React.useState<Manifest[]>([]);
+  const [compareId, setCompareId] = React.useState<string | null>(null);
+  const [compareAggs, setCompareAggs] = React.useState<Aggregate[]>([]);
+  const [compareMeta, setCompareMeta] = React.useState<Manifest | null>(null);
 
   const load = React.useCallback(async () => {
     try {
@@ -129,6 +157,15 @@ export default function BenchmarkPage() {
       setJevWired(Boolean(data.jevWired));
     } catch {
       /* first-load race; the run will refresh */
+    }
+    try {
+      const rl = await fetch("/api/benchmark?runs=list", { credentials: "include" });
+      if (rl.ok) {
+        const list = await rl.json();
+        setRunList(list.runs ?? []);
+      }
+    } catch {
+      /* history optional — latest run still renders */
     }
   }, []);
 
@@ -190,13 +227,23 @@ export default function BenchmarkPage() {
           seed,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "benchmark run failed");
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        throw new Error("Session expired — sign out and sign in again, then retry. Finished runs are safe in history.");
+      }
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? "benchmark run failed");
       setManifest({ ...data.manifest, persisted: data.persisted });
       setAggregates(data.aggregates ?? []);
       setRecords(data.records ?? []);
       setSkippedSystems(data.skippedSystems ?? []);
       setPhase("idle");
+      // Refresh history so the just-finished run is comparable immediately.
+      try {
+        const rl = await fetch("/api/benchmark?runs=list", { credentials: "include" });
+        if (rl.ok) setRunList((await rl.json()).runs ?? []);
+      } catch {
+        /* optional */
+      }
     } catch (err) {
       // Refresh anyway: the run may have completed server-side while our
       // connection was lost — persisted results beat a stuck spinner.
@@ -229,6 +276,13 @@ export default function BenchmarkPage() {
   const classOrder = ["A", "B", "C", "D", "E"];
   const aggregateFor = (system: string, workloadClass: string) =>
     aggregates.find((a) => a.system === system && a.workloadClass === workloadClass) ?? null;
+  // First measured record per cell — feeds the model + config-hash tooltip
+  // (proves "same model?" without a server change; records carry both).
+  const recordFor = (system: string, workloadClass: string) =>
+    records.find((r) => r.system === system && r.workloadClass === workloadClass) ?? null;
+  const shortHash = (h: string) => (h.startsWith("sha256:") ? `sha256:${h.slice(7, 15)}…` : h.slice(0, 14) || "—");
+  const shortModel = (m: string | null) =>
+    !m ? "n/a" : m.includes("/") ? (m.split("/").pop() ?? m) : m;
 
   // ── Real points: deterministic composite of MEASURED rates only ──
   // cell points = 100 × (0.7 × successRate + 0.3 × verificationPassRate),
@@ -278,6 +332,41 @@ export default function BenchmarkPage() {
     return (b.quality ?? -1) - (a.quality ?? -1);
   });
   const maxPoints = Math.max(1, ...leaderboard.map((s) => s.points ?? 0));
+
+  // History compare: mean cell-points per system for any aggregate set.
+  const pointsBySystem = (aggs: Aggregate[]): Map<string, number | null> => {
+    const out = new Map<string, number | null>();
+    for (const system of systemOrder) {
+      const cells = classOrder
+        .map((c) => aggs.find((a) => a.system === system && a.workloadClass === c) ?? null)
+        .filter((a) => a !== null)
+        .map((a) => cellPoints(a!))
+        .filter((v): v is number => v !== null);
+      out.set(system, cells.length > 0 ? cells.reduce((x, y) => x + y, 0) / cells.length : null);
+    }
+    return out;
+  };
+  const runLabel = (m: Manifest) =>
+    `${m.runId.slice(0, 14)} · ${new Date(m.startedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} · ${m.systems.length}sys × ${m.runsPerClass}/class`;
+
+  const loadCompare = React.useCallback(async (runId: string) => {
+    setCompareId(runId);
+    if (!runId) {
+      setCompareAggs([]);
+      setCompareMeta(null);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/benchmark?runId=${encodeURIComponent(runId)}`, { credentials: "include" });
+      if (!res.ok) throw new Error("run not found");
+      const data = await res.json();
+      setCompareAggs(data.aggregates ?? []);
+      setCompareMeta(data.manifest ?? null);
+    } catch {
+      setCompareAggs([]);
+      setCompareMeta(null);
+    }
+  }, []);
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-10 px-6 py-10">
@@ -501,6 +590,67 @@ export default function BenchmarkPage() {
         </section>
       ) : null}
 
+      {/* ── Run history compare: current vs any past run ── */}
+      {runList.length > 1 ? (
+        <section className="space-y-3 rounded-lg border border-border bg-surface p-4">
+          <p className="meta">RUN HISTORY COMPARE · CURRENT ({manifest?.runId.slice(0, 14) ?? "—"}) VS PAST</p>
+          <label className="meta flex items-center gap-2">
+            PAST RUN
+            <select
+              value={compareId ?? ""}
+              onChange={(e) => loadCompare(e.target.value)}
+              className="max-w-full rounded border border-border bg-surface px-2 py-1 text-ivory"
+            >
+              <option value="">pick a past run…</option>
+              {runList
+                .filter((r) => r.runId !== manifest?.runId)
+                .map((r) => (
+                  <option key={r.runId} value={r.runId}>
+                    {runLabel(r)}
+                  </option>
+                ))}
+            </select>
+          </label>
+          {compareId && compareMeta ? (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[480px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="meta px-3 py-2 font-normal">SYSTEM</th>
+                    <th className="meta px-3 py-2 font-normal">NOW</th>
+                    <th className="meta px-3 py-2 font-normal">THEN</th>
+                    <th className="meta px-3 py-2 font-normal">Δ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const now = pointsBySystem(aggregates);
+                    const then = pointsBySystem(compareAggs);
+                    return systemOrder
+                      .filter((s) => now.get(s) !== null || then.get(s) !== null)
+                      .map((s) => {
+                        const a = now.get(s) ?? null;
+                        const b = then.get(s) ?? null;
+                        const d = a !== null && b !== null ? Math.round(a - b) : null;
+                        return (
+                          <tr key={s} className="border-b border-border-light last:border-0">
+                            <td className="px-3 py-2 text-ivory">{s}</td>
+                            <td className="px-3 py-2 text-ivory-faint">{a === null ? "—" : `${Math.round(a)} pts`}</td>
+                            <td className="px-3 py-2 text-ivory-faint">{b === null ? "—" : `${Math.round(b)} pts`}</td>
+                            <td className={cn("px-3 py-2 font-medium", d === null ? "text-ivory-faint" : d > 0 ? "success-text" : d < 0 ? "danger-text" : "text-warning-text")}>
+                              {d === null ? "—" : `${d > 0 ? "+" : ""}${d}`}
+                            </td>
+                          </tr>
+                        );
+                      });
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       {/* ── Visual comparison: systems at a glance ── */}
       {systemSummary.length > 0 ? (
         <section className="space-y-4">
@@ -583,8 +733,12 @@ export default function BenchmarkPage() {
                   <td className="px-4 py-3 text-ivory">{system}</td>
                   {classOrder.map((classId) => {
                     const agg = aggregateFor(system, classId);
+                    const rec = recordFor(system, classId);
+                    const tip = rec
+                      ? `model: ${rec.model ?? "n/a"} · provider: ${rec.provider ?? "n/a"} · config: ${rec.configHash || "—"} · difficulty: ${rec.difficulty} · ${rec.timestamp}`
+                      : "no measured record yet";
                     return (
-                      <td key={classId} className="px-4 py-3 align-top text-ivory-faint">
+                      <td key={classId} className="px-4 py-3 align-top text-ivory-faint" title={tip}>
                         {agg ? (
                           <div className="space-y-0.5">
                             <p className={cn("font-medium", (cellPoints(agg) ?? 0) >= 70 ? "success-text" : (cellPoints(agg) ?? 0) >= 40 ? "text-warning-text" : "danger-text")}>
@@ -598,6 +752,54 @@ export default function BenchmarkPage() {
                             </p>
                             <p className="meta">
                               Q {agg.avgQualityScore === null ? "—" : agg.avgQualityScore.toFixed(2)} · {agg.avgIntelligenceLevel === null ? "—" : `L${agg.avgIntelligenceLevel.toFixed(1)}`} · ${fmt(agg.totalCost, 4)}
+                            </p>
+                            <p className="meta opacity-80">
+                              {shortModel(rec?.model ?? null)} · {shortHash(rec?.configHash ?? "")}
+                            </p>
+                          </div>
+                        ) : (
+                          <span className="meta">—</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* ── Efficiency: decision · resource · escalation · verify (spec §Efficiency) ── */}
+      <section className="space-y-4">
+        <p className="meta">EFFICIENCY · DECISION · RESOURCE · ESCALATION RATE · VERIFY RATE · COST/SUCCESS</p>
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-border bg-surface">
+                <th className="meta px-4 py-3 font-normal">SYSTEM</th>
+                {classOrder.map((classId) => (
+                  <th key={classId} className="meta px-4 py-3 font-normal">
+                    CLASS {classId}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {systemOrder.map((system) => (
+                <tr key={system} className="border-b border-border-light last:border-0">
+                  <td className="px-4 py-3 text-ivory">{system}</td>
+                  {classOrder.map((classId) => {
+                    const agg = aggregateFor(system, classId);
+                    const ratio = (v: number | null) => (v === null ? "—" : `${Math.round(v * 100)}%`);
+                    return (
+                      <td key={classId} className="px-4 py-3 align-top text-ivory-faint">
+                        {agg ? (
+                          <div className="space-y-0.5">
+                            <p className="meta">DEC {ratio(agg.decisionEfficiency)} · RES {ratio(agg.resourceEfficiency)}</p>
+                            <p className="meta">ESC {ratio(agg.escalationRate)} · VER {ratio(agg.verificationPassRate)}</p>
+                            <p className="meta">
+                              {agg.costPerSuccessfulTask === null ? "—" : `$${agg.costPerSuccessfulTask.toFixed(4)}`} / success
                             </p>
                           </div>
                         ) : (
@@ -650,33 +852,90 @@ export default function BenchmarkPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {records.map((record, index) => (
-                    <tr
-                      key={`${record.benchmarkRunId}-${record.system}-${record.workloadClass}-${index}`}
-                      className="border-b border-border-light last:border-0"
-                    >
-                      <td className="px-3 py-2 text-ivory">{record.system}</td>
-                      <td className="px-3 py-2 text-gold">{record.workloadClass}</td>
-                      <td className="meta px-3 py-2">{record.runMode}</td>
-                      <td className={cn("px-3 py-2", record.success ? "success-text" : "danger-text")}>
-                        {record.success ? "PASS" : "FAIL"}
-                      </td>
-                      <td className="meta px-3 py-2">{record.verificationStatus}</td>
-                      <td className="meta px-3 py-2">
-                        {record.qualityScore === null || record.qualityScore === undefined ? "—" : record.qualityScore.toFixed(2)}
-                      </td>
-                      <td className="meta px-3 py-2">
-                        {record.inputTokens ?? "—"}/{record.outputTokens ?? "—"}
-                      </td>
-                      <td className="meta px-3 py-2">{fmt(record.latencyMs)}ms</td>
-                      <td className="meta px-3 py-2">
-                        {record.intelligenceLevel === null ? "—" : `L${record.intelligenceLevel}`}
-                      </td>
-                      <td className="meta px-3 py-2">
-                        {record.cost.totalCost === null ? "—" : `$${record.cost.totalCost.toFixed(4)}`}
-                      </td>
-                    </tr>
-                  ))}
+                  {records.map((record, index) => {
+                    const key = `${record.benchmarkRunId}-${record.system}-${record.workloadClass}-${index}`;
+                    const open = expanded === key;
+                    const meta = (record.metadata ?? {}) as Record<string, unknown>;
+                    const evidence = (meta.evidence ?? null) as Record<string, unknown> | null;
+                    const rawText = typeof meta.raw_text === "string" ? meta.raw_text : "";
+                    const errText = typeof meta.error === "string" ? meta.error : "";
+                    return (
+                      <React.Fragment key={key}>
+                        <tr
+                          onClick={() => setExpanded(open ? null : key)}
+                          title={open ? "Collapse evidence" : "Click for evidence — what exactly passed/failed"}
+                          className={cn(
+                            "cursor-pointer border-b border-border-light last:border-0 hover:bg-gold-pale",
+                            open && "bg-gold-pale",
+                          )}
+                        >
+                          <td className="px-3 py-2 text-ivory">{record.system}</td>
+                          <td className="px-3 py-2 text-gold">{record.workloadClass}</td>
+                          <td className="meta px-3 py-2">{record.runMode}</td>
+                          <td className={cn("px-3 py-2", record.success ? "success-text" : "danger-text")}>
+                            {record.success ? "PASS" : "FAIL"}
+                          </td>
+                          <td className="meta px-3 py-2">{record.verificationStatus}</td>
+                          <td className="meta px-3 py-2">
+                            {record.qualityScore === null || record.qualityScore === undefined ? "—" : record.qualityScore.toFixed(2)}
+                          </td>
+                          <td className="meta px-3 py-2">
+                            {record.inputTokens ?? "—"}/{record.outputTokens ?? "—"}
+                          </td>
+                          <td className="meta px-3 py-2">{fmt(record.latencyMs)}ms</td>
+                          <td className="meta px-3 py-2">
+                            {record.intelligenceLevel === null ? "—" : `L${record.intelligenceLevel}`}
+                          </td>
+                          <td className="meta px-3 py-2">
+                            {record.cost.totalCost === null ? "—" : `$${record.cost.totalCost.toFixed(4)}`}
+                          </td>
+                        </tr>
+                        {open ? (
+                          <tr key={`${key}-detail`} className="border-b border-border-light">
+                            <td colSpan={10} className="bg-surface px-4 py-3">
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <div>
+                                  <p className="meta text-gold">EVIDENCE — WHAT WAS CHECKED</p>
+                                  {evidence ? (
+                                    <div className="mt-1 space-y-0.5">
+                                      {Object.entries(evidence).map(([k, v]) => (
+                                        <p key={k} className="meta break-all">
+                                          {k}: {typeof v === "object" ? JSON.stringify(v) : String(v)}
+                                        </p>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="meta mt-1">— no evidence captured</p>
+                                  )}
+                                  {errText ? (
+                                    <p className="meta mt-2 break-all text-danger-text">error: {errText.slice(0, 300)}</p>
+                                  ) : null}
+                                </div>
+                                <div>
+                                  <p className="meta text-gold">TRACE + COST</p>
+                                  <p className="meta mt-1 break-all">
+                                    model {record.model ?? "n/a"} · {record.provider ?? "n/a"}
+                                  </p>
+                                  <p className="meta break-all">config {record.configHash || "—"}</p>
+                                  <p className="meta">
+                                    calls {record.modelCalls}m/{record.toolCalls}t · retries {record.retries} · esc {record.escalations} · ttft {record.ttftMs ?? "—"}ms · {record.timestamp}
+                                  </p>
+                                  <p className="meta">
+                                    cost m {record.cost.modelCost ?? "—"} · c {record.cost.computeCost ?? "—"} · t {record.cost.toolCost ?? "—"} · v {record.cost.verificationCost ?? "—"} · o {record.cost.orchestrationCost ?? "—"}
+                                  </p>
+                                  {rawText ? (
+                                    <p className="mt-2 max-h-32 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-ivory-faint">
+                                      {rawText.slice(0, 900)}{rawText.length > 900 ? "…" : ""}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </React.Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

@@ -19,7 +19,7 @@ import {
   runWorkloadClass,
   type WorkloadClassDef,
 } from "./classes";
-import { callLLMPinned, estimateCostUsd } from "./llm";
+import { estimateCostUsd, streamOpenRouter } from "./llm";
 import { configHash, TASK_VERSION } from "./benchmarkTypes";
 import { GROUND_TRUTH } from "./benchmarkEval";
 import type {
@@ -213,6 +213,7 @@ interface BaselineOutcome {
   cachedTokens: number | null;
   model: string | null;
   latencyMs: number;
+  ttftMs: number | null;
   retries: number;
   costUsd: number | null;
   error?: string;
@@ -230,11 +231,16 @@ async function pinnedCall(
         : PINNED_CONFIG.OPENROUTER_MODEL;
   const t0 = Date.now();
   try {
-    const result = await callLLMPinned("openrouter", {
+    // Streaming call (text collected, deltas dropped): same pinned model, but
+    // honest first-token timing + usage chunk ride along for TTFT metering.
+    // opts.model set → plan is [model, model], never a provider drift.
+    const result = await streamOpenRouter({
       prompt,
       model, // exact provider-pinned model — no routing, no fallback
       maxTokens: PINNED_CONFIG.MAX_TOKENS,
       temperature: PINNED_CONFIG.TEMPERATURE,
+      timeoutMs: 55_000,
+      onDelta: () => undefined,
     });
     return {
       text: result.text,
@@ -243,8 +249,9 @@ async function pinnedCall(
       cachedTokens: result.cachedTokens ?? null,
       model: result.model,
       latencyMs: Date.now() - t0,
-      retries: 0,
-      costUsd: estimateCostUsd(model, result.inputTokens ?? null, result.tokens ?? null, result.cachedTokens ?? 0),
+      ttftMs: result.ttftMs ?? null,
+      retries: (result.attempts ?? 1) - 1,
+      costUsd: result.costUsd ?? estimateCostUsd(model, result.inputTokens ?? null, result.tokens ?? null, result.cachedTokens ?? 0),
     };
   } catch (err) {
     return {
@@ -254,6 +261,7 @@ async function pinnedCall(
       cachedTokens: null,
       model,
       latencyMs: Date.now() - t0,
+      ttftMs: null,
       retries: 0,
       costUsd: null,
       error: err instanceof Error ? err.message : "pinned baseline call failed",
@@ -289,6 +297,7 @@ export async function runPinnedBaselineTask(
 
   const call = await pinnedCall(system, def.prompt);
   rec.latencyMs = call.latencyMs;
+  rec.ttftMs = call.ttftMs;
   rec.inputTokens = call.inputTokens;
   rec.outputTokens = call.outputTokens;
   rec.cachedTokens = call.cachedTokens;

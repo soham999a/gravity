@@ -80,8 +80,7 @@ function greeting(): string {
   return "Good evening";
 }
 
-function timeAgo(iso: string): string {
-  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+function timeAgo(iso: string): string {  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins} min ago`;
   const hours = Math.floor(mins / 60);
@@ -122,6 +121,10 @@ function HomeContent() {
   const [authOpen, setAuthOpen] = React.useState(false);
   const [pendingRun, setPendingRun] = React.useState<{ prompt: string; files?: CsvFile[]; imageModel?: string } | null>(null);
   const [mode, setMode] = React.useState<"mission" | "chat">("mission");
+  // Greeting depends on local hour — server (UTC) and browser (IST) disagree,
+  // so render a fixed word until mount (hydration-safe).
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
   // Chat lives in a popup (bone + dark mix) — same ChatThread, same work.
   // Always mounted (hidden when closed) so streams + threads survive closing.
   const [chatOpen, setChatOpen] = React.useState(false);
@@ -134,12 +137,13 @@ function HomeContent() {
     });
   }, []);
 
-  // Giant-grade keys: Cmd/Ctrl+K toggles chat from anywhere, ESC closes
-  // (but never hijacks the chat input's own ESC-to-stop).
+  // Giant-grade keys: Cmd/Ctrl+J toggles chat from anywhere (Ctrl+K belongs
+  // to the command palette — search wins that shortcut everywhere), ESC
+  // closes (but never hijacks the chat input's own ESC-to-stop).
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey;
-      if (mod && event.key.toLowerCase() === "k") {
+      if (mod && event.key.toLowerCase() === "j") {
         event.preventDefault();
         setChatOpen((was) => {
           if (!was) setMode("chat");
@@ -322,7 +326,7 @@ function HomeContent() {
             <div className="flex items-center justify-between gap-3">
               <p className="studio-eyebrow">01 / GRAVITY STUDIO</p>
               <span className="studio-meta">
-                {greeting().toUpperCase()}, {displayName.toUpperCase()}
+                {mounted ? greeting().toUpperCase() : "WELCOME"}, {displayName.toUpperCase()}
               </span>
             </div>
             <h1 className="studio-hero-title mt-6">
@@ -348,7 +352,7 @@ function HomeContent() {
               <button
                 type="button"
                 onClick={() => { setMode("chat"); setChatOpen(true); focusChatInput(); }}
-                title="Open chat (Ctrl/⌘+K)"
+                title="Open chat (Ctrl/⌘+J)"
                 className={mode === "chat" ? "studio-primary-button px-4 py-1.5" : "studio-secondary-button px-4 py-1.5"}
               >
                 Chat
@@ -412,7 +416,7 @@ function HomeContent() {
                 <p className="chat-popup-title">Quick answers — streams like chat.</p>
               </div>
               <div className="chat-popup-actions">
-                <span className="chat-popup-hint" title="Ctrl/⌘+K toggles chat · ESC closes">CTRL K · ESC</span>
+                <span className="chat-popup-hint" title="Ctrl/⌘+J toggles chat · ESC closes">CTRL J · ESC</span>
                 <button
                   type="button"
                   className="chat-popup-close"

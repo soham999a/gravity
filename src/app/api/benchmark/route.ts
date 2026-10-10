@@ -5,7 +5,9 @@ import { GROUND_TRUTH } from "@/lib/gravity/benchmarkEval";
 import { PINNED_CONFIG, JEV_WIRED } from "@/lib/gravity/benchmarkAdapters";
 import { REPRODUCIBILITY_NOTE } from "@/lib/gravity/benchmarkTypes";
 import {
+  getBenchmarkRun,
   getLatestBenchmark,
+  listBenchmarkRuns,
   saveBenchmarkRun,
 } from "@/lib/gravity/benchmarkStore";
 import type { BenchmarkSystem } from "@/lib/gravity/benchmarkTypes";
@@ -29,6 +31,35 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
   const { searchParams } = new URL(request.url);
+  // Run history for A/B compare: ?runs=list → manifests (latest 20).
+  if (searchParams.get("runs") === "list") {
+    const runs = await listBenchmarkRuns(20);
+    return NextResponse.json({
+      runs: runs.map((m) => ({
+        runId: m.runId,
+        seed: m.seed,
+        startedAt: m.startedAt,
+        taskVersion: m.taskVersion,
+        systems: m.systems,
+        workloadClasses: m.workloadClasses,
+        runsPerClass: m.runsPerClass,
+        recordCount: m.recordCount,
+      })),
+    });
+  }
+  // ?runId=xxx → that exact run (manifest + records + aggregates).
+  const runId = searchParams.get("runId");
+  if (runId) {
+    const run = await getBenchmarkRun(runId);
+    if (!run.manifest) {
+      return NextResponse.json({ error: "unknown runId" }, { status: 404 });
+    }
+    return NextResponse.json({
+      ...run,
+      taskSet: "workload-classes",
+      reproducibility: REPRODUCIBILITY_NOTE,
+    });
+  }
   if (searchParams.get("format") === "csv") {
     const { records } = await getLatestBenchmark();
     return new NextResponse(recordsToCsv(records), {
