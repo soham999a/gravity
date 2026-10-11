@@ -221,7 +221,11 @@ export function useChatThreads() {
             ...(model ? { model } : {}),
           }),
         });
-        if (!res.ok) throw new Error(`Status ${res.status}`);
+        if (!res.ok) {
+          // Surface the server's reason (402 top-up nudge, 429, 401) — not "Status N".
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(data.error ?? `Status ${res.status}`);
+        }
         const meta = await readSSE(res, appendDelta, controller.signal);
         if (meta.error) throw new Error(meta.error);
         const ms = Date.now() - t0;

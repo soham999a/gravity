@@ -108,13 +108,25 @@ export async function POST(request: Request) {
       );
     }
 
-    const { mission, profile, routing } = await createMissionWithPlan(prompt, {
-      tenantId: ctx.tenantId,
-      userId: ctx.uid,
-      files: body.files,
-      forceStrategy: body.forceStrategy,
-      imageModel: body.imageModel,
-    });
+    // Billing gate: BYOK → wallet → free daily trial (1 mission/day).
+    const { authorize, settle, runWithKey } = await import("@/lib/billing");
+    const authz = await authorize(ctx.uid, "mission");
+    if (!authz.ok) {
+      return NextResponse.json({ error: authz.reason }, { status: authz.code });
+    }
+
+    const { mission, profile, routing } = await runWithKey(
+      authz.mode === "byok" ? authz.key : undefined,
+      () =>
+        createMissionWithPlan(prompt, {
+          tenantId: ctx.tenantId,
+          userId: ctx.uid,
+          files: body.files,
+          forceStrategy: body.forceStrategy,
+          imageModel: body.imageModel,
+        }),
+    );
+    void settle(ctx.uid, "mission", authz.mode);
 
     return NextResponse.json(
       {

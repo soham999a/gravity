@@ -35,9 +35,15 @@ export async function POST(
   // instance (empty in-memory store) cannot 404 a mission that was
   // just created in a parallel invocation. executeMission() itself
   // calls getMission() and throws if the mission is genuinely missing.
-  waitUntil(executeMission(id).catch((err) => {
-    console.error(`[execute] mission ${id} failed:`, String(err).slice(0, 500));
-  }));
+  // Billing settled at create time; execution inherits the caller's own
+  // provider key (BYOK) through AsyncLocalStorage — their key, their bill.
+  const { runWithKey, getUserProviderKey } = await import("@/lib/billing");
+  const userKey = await getUserProviderKey(ctx.uid);
+  waitUntil(
+    runWithKey(userKey, () => executeMission(id)).catch((err) => {
+      console.error(`[execute] mission ${id} failed:`, String(err).slice(0, 500));
+    }),
+  );
 
   return NextResponse.json({ ok: true, missionId: id, status: "executing" });
 }

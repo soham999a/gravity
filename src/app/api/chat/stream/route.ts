@@ -29,6 +29,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "chat rate limited — 30 per 10 minutes" }, { status: 429 });
   }
 
+  // Billing gate: BYOK → wallet → free daily trial (5 chats/day).
+  const { authorize, settle, runWithKey } = await import("@/lib/billing");
+  const authz = await authorize(ctx.uid, "chat");
+  if (!authz.ok) {
+    return NextResponse.json({ error: authz.reason }, { status: authz.code });
+  }
+  const byokKey = authz.mode === "byok" ? authz.key : undefined;
+
   let body: { messages?: ChatMessage[]; temperature?: number; model?: string };
   try {
     body = (await request.json()) as typeof body;
@@ -66,22 +74,26 @@ export async function POST(request: Request) {
       const send = (obj: unknown) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
       try {
-        const result = await streamOpenRouter({
-          tier: "general",
-          system:
-            "You are GRAVITY, a sharp senior operator. Answer directly with clean markdown. " +
-            "No preamble about yourself, no filler.",
-          prompt: lastUser.content.slice(0, 4000),
-          history: history.map((m) => ({
-            role: m.role,
-            content: m.content.slice(0, 4000),
-          })),
-          maxTokens: 1500,
-          temperature,
-          model,
-          timeoutMs: 55_000,
-          onDelta: (chunk) => send({ delta: chunk }),
-        });
+        const result = await runWithKey(byokKey, () =>
+          streamOpenRouter({
+            tier: "general",
+            system:
+              "You are GRAVITY, a sharp senior operator. Answer directly with clean markdown. " +
+              "No preamble about yourself, no filler.",
+            prompt: lastUser.content.slice(0, 4000),
+            history: history.map((m) => ({
+              role: m.role,
+              content: m.content.slice(0, 4000),
+            })),
+            maxTokens: 1500,
+            temperature,
+            model,
+            timeoutMs: 55_000,
+            onDelta: (chunk) => send({ delta: chunk }),
+          }),
+        );
+        // Settle AFTER success: wallet deduct or free-counter bump.
+        void settle(ctx.uid, "chat", authz.mode);
         send({
           done: true,
           model: result.model,

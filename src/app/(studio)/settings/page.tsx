@@ -43,14 +43,12 @@ const PLANS = [
   {
     id: "free",
     name: "FREE",
-    tagline: "A real monthly allowance to feel the engine.",
-    price: "0",
-    period: "FORVER",
+    tagline: "A daily taste on the shared key.",
+    price: "₹0",
+    period: "FOREVER",
     features: [
-      "250k tokens / month",
-      "Six intelligence families",
-      "CSV + text intake",
-      "Clipped results & reasoning",
+      "5 chats / day",
+      "1 mission / day",
       "Community support",
     ],
     cta: "Current plan",
@@ -59,33 +57,31 @@ const PLANS = [
   {
     id: "pro",
     name: "PRO",
-    tagline: "Serious throughput for teams and operators.",
-    price: "49",
+    tagline: "10× daily caps for regulars. ₹199/mo.",
+    price: "₹199",
     period: "PER MONTH",
     features: [
-      "2.5M tokens / month",
-      "Priority execution queue",
-      "Unlimited projects",
-      "12-month history retention",
+      "50 chats / day",
+      "10 missions / day",
+      "Wallet top-ups",
       "Email support",
     ],
     cta: "Upgrade",
     current: false,
   },
   {
-    id: "enterprise",
-    name: "ENTERPRISE",
-    tagline: "Controlled deployment at scale.",
-    price: "Custom",
-    period: "PER YEAR",
+    id: "pro_plus",
+    name: "PRO+",
+    tagline: "40× caps for operators. ₹799/mo.",
+    price: "₹799",
+    period: "PER MONTH",
     features: [
-      "Private model routing",
-      "SSO + audit logs",
-      "Usage-based billing",
-      "Dedicated infrastructure",
-      "SLA-backed support",
+      "200 chats / day",
+      "40 missions / day",
+      "Benchmarks included via wallet",
+      "Priority support",
     ],
-    cta: "Talk to us",
+    cta: "Upgrade",
     current: false,
   },
 ];
@@ -346,52 +342,331 @@ function BillingTab({ usage }: { usage: Usage }) {
   const pct = Math.min(100, (month / FREE_LIMIT) * 100);
   const low = pct < 70;
 
+  const [state, setState] = React.useState<{
+    credits: number;
+    plan: string;
+    planExpiresAt: string | null;
+    plans?: Record<string, { label: string; priceInr: number; mult: number }>;
+    usage: { chat: number; mission: number; bench_chunk: number; refine: number };
+    hasKey: boolean;
+    masked: string | null;
+    packs: { id: string; inr: number; credits: number }[];
+    invoices: { id: string; pack: string; amountInr: number; credits: number; at: string }[];
+    razorpayConfigured: boolean;
+    razorpayKeyId: string | null;
+  } | null>(null);
+  const [keyDraft, setKeyDraft] = React.useState("");
+  const [savingKey, setSavingKey] = React.useState(false);
+  const [paying, setPaying] = React.useState<string | null>(null);
+
+  const refresh = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/billing", { credentials: "include" });
+      if (res.ok) setState(await res.json());
+    } catch {
+      /* offline */
+    }
+  }, []);
+  React.useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const loadRazorpay = React.useCallback(async (): Promise<boolean> => {
+    if (typeof (window as unknown as { Razorpay?: unknown }).Razorpay !== "undefined") return true;
+    await new Promise<void>((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://checkout.razorpay.com/v1/checkout.js";
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error("checkout.js failed"));
+      document.body.appendChild(s);
+    }).catch(() => undefined);
+    return typeof (window as unknown as { Razorpay?: unknown }).Razorpay !== "undefined";
+  }, []);
+
+  const saveKey = async () => {
+    if (!keyDraft.trim() || savingKey) return;
+    setSavingKey(true);
+    try {
+      const res = await fetch("/api/billing/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ key: keyDraft.trim() }),
+      });
+      const data = (await res.json()) as { ok?: boolean; masked?: string; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "save failed");
+      setKeyDraft("");
+      toast("Key saved", `Validated live. Calls now bill ${data.masked}.`, "success");
+      void refresh();
+    } catch (err) {
+      toast("Key rejected", err instanceof Error ? err.message : "save failed", "error");
+    } finally {
+      setSavingKey(false);
+    }
+  };
+
+  const removeKey = async () => {
+    await fetch("/api/billing/keys", { method: "DELETE", credentials: "include" }).catch(() => undefined);
+    toast("Key removed", "Calls fall back to shared key + free quota.");
+    void refresh();
+  };
+
+  const topUp = async (packId: string) => {
+    if (paying) return;
+    setPaying(packId);
+    try {
+      const orderRes = await fetch("/api/billing/order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ pack: packId }),
+      });
+      const order = (await orderRes.json()) as { orderId?: string; amount?: number; currency?: string; keyId?: string; error?: string };
+      if (!orderRes.ok || !order.orderId) throw new Error(order.error ?? "order failed");
+      if (!(await loadRazorpay())) throw new Error("payment window failed to load");
+      const RazorpayCtor = (window as unknown as { Razorpay: new (opts: Record<string, unknown>) => { open: () => void } }).Razorpay;
+      await new Promise<void>((resolve, reject) => {
+        const rzp = new RazorpayCtor({
+          key: order.keyId,
+          amount: order.amount,
+          currency: order.currency,
+          order_id: order.orderId,
+          name: "GRAVITY Studio",
+          description: "Credit top-up",
+          theme: { color: "#B8960C" },
+          handler: (resp: unknown) => {
+            const r = resp as { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string };
+            fetch("/api/billing/verify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({
+                orderId: r.razorpay_order_id,
+                paymentId: r.razorpay_payment_id,
+                signature: r.razorpay_signature,
+                pack: packId,
+              }),
+            })
+              .then(async (v) => {
+                const data = (await v.json()) as { ok?: boolean; credits?: number; error?: string };
+                if (!v.ok) throw new Error(data.error ?? "verify failed");
+                toast("Topped up", `${data.credits} credits in wallet.`, "success");
+                void refresh();
+                resolve();
+              })
+              .catch((e: unknown) => reject(e instanceof Error ? e : new Error("verify failed")));
+          },
+          modal: { ondismiss: () => reject(new Error("payment window closed")) },
+        });
+        rzp.open();
+      });
+    } catch (err) {
+      toast("Top-up failed", err instanceof Error ? err.message : "try again", "error");
+    } finally {
+      setPaying(null);
+    }
+  };
+
+  const subscribe = async (plan: "pro" | "pro_plus") => {
+    if (paying) return;
+    setPaying(plan);
+    try {
+      const res = await fetch("/api/billing/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ plan }),
+      });
+      const data = (await res.json()) as { subscriptionId?: string; keyId?: string; error?: string };
+      if (!res.ok || !data.subscriptionId) throw new Error(data.error ?? "subscribe failed");
+      if (!(await loadRazorpay())) throw new Error("payment window failed to load");
+      const RazorpayCtor = (window as unknown as { Razorpay: new (opts: Record<string, unknown>) => { open: () => void } }).Razorpay;
+      await new Promise<void>((resolve, reject) => {
+        const rzp = new RazorpayCtor({
+          key: data.keyId,
+          subscription_id: data.subscriptionId,
+          name: "GRAVITY Studio",
+          description: `${plan.toUpperCase()} subscription`,
+          theme: { color: "#B8960C" },
+          handler: () => {
+            fetch("/api/billing/subscribe/confirm", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({ subscriptionId: data.subscriptionId, plan }),
+            })
+              .then(async (v) => {
+                const c = (await v.json()) as { ok?: boolean; error?: string };
+                if (!v.ok) throw new Error(c.error ?? "confirm failed");
+                toast("Subscribed", `${plan.toUpperCase()} active.`, "success");
+                void refresh();
+                resolve();
+              })
+              .catch((e: unknown) => reject(e instanceof Error ? e : new Error("confirm failed")));
+          },
+          modal: { ondismiss: () => reject(new Error("payment window closed")) },
+        });
+        rzp.open();
+      });
+    } catch (err) {
+      toast("Subscribe failed", err instanceof Error ? err.message : "try again", "error");
+    } finally {
+      setPaying(null);
+    }
+  };
+
   const onPlanAction = (plan: (typeof PLANS)[number]) => {
     if (plan.current) return;
-    if (plan.id === "pro") {
-      toast("Early access requested", "Checkout launches soon — you're on the list.");
-    } else {
-      toast("Sales notified", "We'll reach out about an Enterprise workspace.", "success");
+    if (!state?.razorpayConfigured) {
+      toast("Checkout soon", "Subscriptions go live with Razorpay keys — BYOK and free quota work today.");
+      return;
     }
+    if (plan.id === "pro" || plan.id === "pro_plus") void subscribe(plan.id);
+    else toast("Noted", "We'll be in touch.", "success");
   };
 
   return (
     <>
+      {/* ── Wallet + today's trial ── */}
       <div className="studio-settings-group">
         <div className="studio-settings-group-head">
-          <h2 className="studio-settings-title">Current plan</h2>
-          <p className="studio-meta">FREE TIER · NO CARD ON FILE</p>
+          <h2 className="studio-settings-title">Wallet & usage</h2>
+          <p className="studio-meta">
+            {(state?.plan ?? "free").toUpperCase()}
+            {state?.planExpiresAt ? ` · TILL ${new Date(state.planExpiresAt).toLocaleDateString()}` : ""}
+          </p>
         </div>
-
-        <div className="studio-usage">
-          <div className="flex flex-wrap items-baseline justify-between gap-3">
-            <div>
-              <p className="studio-eyebrow">FREE PLAN · TOKEN ALLOWANCE</p>
-              <p className="mt-2 font-serif text-2xl font-light text-ivory">
-                {month.toLocaleString()}{" "}
-                <span className="text-base text-muted-foreground">of {FREE_LIMIT.toLocaleString()}</span>
-              </p>
-            </div>
-            <span className={low ? "studio-stat-metric-ok" : "studio-stat-metric-warn"}>
-              {Math.round(pct)}% USED
-            </span>
+        <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2">
+          <div>
+            <p className="studio-eyebrow">CREDITS</p>
+            <p className="mt-2 font-serif text-2xl font-light text-ivory">
+              {state ? state.credits.toLocaleString() : "—"}
+            </p>
           </div>
-          <div className="studio-usage-meter">
-            <div
-              className={`studio-usage-fill ${low ? "" : "studio-usage-fill-high"}`}
-              style={{ width: `${pct}%` }}
-            />
-          </div>
-          <div className="studio-usage-row">
-            <span className="studio-meta">RESETS {new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
-            <span className="studio-meta">USAGE THIS MONTH</span>
+          <div>
+            <p className="studio-eyebrow">FREE TRIAL TODAY</p>
+            <p className="studio-meta mt-2">
+              {state ? `${state.usage.chat}/5 chats · ${state.usage.mission}/1 missions` : "—"}
+            </p>
           </div>
         </div>
-
-        <p className="studio-settings-copy mt-5">
-          Lifetime use across all your tasks tracks toward this monthly allowance. Upgrading removes
-          the ceiling and moves your work to the front of the queue.
+        <p className="studio-settings-copy mt-4">
+          1 chat = 1 credit · 1 mission = 5 · 1 benchmark chunk = 5. Credits deduct only after
+          successful runs. Your own API key below skips credits entirely.
         </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {(state?.packs ?? []).map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => void topUp(p.id)}
+              disabled={paying !== null || !state?.razorpayConfigured}
+              title={state?.razorpayConfigured ? `Pay ₹${p.inr}` : "Top-ups go live with Razorpay keys"}
+              className="studio-secondary-button"
+            >
+              {paying === p.id ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
+              +{p.credits} · ₹{p.inr}
+            </button>
+          ))}
+        </div>
+        {!state?.razorpayConfigured ? (
+          <p className="studio-field-hint mt-3">Card top-ups activate once Razorpay keys are configured.</p>
+        ) : null}
+      </div>
+
+      {/* ── BYOK ── */}
+      <div className="studio-settings-group">
+        <div className="studio-settings-group-head">
+          <h2 className="studio-settings-title">Your OpenRouter key</h2>
+          <p className="studio-meta">{state?.hasKey ? `SAVED · ${state.masked ?? ""}` : "NOT SET"}</p>
+        </div>
+        <p className="studio-settings-copy">
+          Bring your own key for unlimited usage — calls bill your OpenRouter balance, never ours.
+          Validated live on save, stored encrypted, never shown again.
+        </p>
+        {state?.hasKey ? (
+          <div className="mt-4 flex items-center gap-3">
+            <span className="studio-example-chip !text-gold">{state.masked}</span>
+            <button type="button" onClick={() => void removeKey()} className="studio-secondary-button">
+              <Trash2 className="size-3.5" /> Remove
+            </button>
+          </div>
+        ) : (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <input
+              type="password"
+              value={keyDraft}
+              onChange={(e) => setKeyDraft(e.target.value)}
+              placeholder="sk-or-…"
+              autoComplete="off"
+              className="studio-input min-w-0 flex-1"
+            />
+            <button
+              type="button"
+              onClick={() => void saveKey()}
+              disabled={savingKey || !keyDraft.trim()}
+              className="studio-primary-button"
+            >
+              {savingKey ? <LoaderCircle className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+              {savingKey ? "Validating…" : "Save key"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="studio-settings-group">
+        <div className="studio-settings-group-head">
+          <h2 className="studio-settings-title">Quota — one panel</h2>
+          <p className="studio-meta">
+            {(state?.plan ?? "free").toUpperCase()} · DAILY TRIAL + MONTHLY BACKSTOP
+          </p>
+        </div>
+        {(() => {
+          const mult = state?.plans?.[state?.plan ?? "free"]?.mult ?? 1;
+          const rows = [
+            { label: "Chats today", used: state?.usage.chat ?? 0, cap: 5 * mult },
+            { label: "Missions today", used: state?.usage.mission ?? 0, cap: 1 * mult },
+            { label: "Refines today", used: state?.usage.refine ?? 0, cap: 3 * mult },
+          ];
+          return (
+            <div className="grid gap-4">
+              {rows.map((r) => {
+                const pct = Math.min(100, (r.used / Math.max(1, r.cap)) * 100);
+                return (
+                  <div key={r.label}>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <p className="studio-meta">{r.label.toUpperCase()}</p>
+                      <p className="studio-meta">{r.used} / {r.cap}</p>
+                    </div>
+                    <div className="studio-usage-meter mt-2">
+                      <div
+                        className={`studio-usage-fill ${pct < 70 ? "" : "studio-usage-fill-high"}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+              <div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="studio-meta">MONTHLY BACKSTOP (ALL USERS)</p>
+                  <p className="studio-meta">
+                    {month.toLocaleString()} / {FREE_LIMIT.toLocaleString()}
+                  </p>
+                </div>
+                <div className="studio-usage-meter mt-2">
+                  <div
+                    className={`studio-usage-fill ${low ? "" : "studio-usage-fill-high"}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <p className="studio-field-hint mt-2">
+                  Daily trial resets midnight · monthly backstop resets {new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toLocaleDateString(undefined, { month: "short", day: "numeric" })} · benchmarks are paid-only (key or credits).
+                </p>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       <div className="studio-settings-group">
@@ -439,13 +714,33 @@ function BillingTab({ usage }: { usage: Usage }) {
           <h2 className="studio-settings-title">Invoices</h2>
           <p className="studio-meta">RECEIPTS</p>
         </div>
-        <div className="studio-empty" style={{ padding: "34px 20px" }}>
-          <CreditCard className="size-5 text-gold" />
-          <h3 className="mt-3 font-serif text-lg">No invoices yet.</h3>
-          <p className="studio-muted mt-1 max-w-sm">
-            The free tier is courtesy of GRAVITY. Invoices will appear here once you upgrade.
-          </p>
-        </div>
+        {(state?.invoices ?? []).length === 0 ? (
+          <div className="studio-empty" style={{ padding: "34px 20px" }}>
+            <CreditCard className="size-5 text-gold" />
+            <h3 className="mt-3 font-serif text-lg">No invoices yet.</h3>
+            <p className="studio-muted mt-1 max-w-sm">
+              Top-ups and subscriptions land here as receipts.
+            </p>
+          </div>
+        ) : (
+          <div className="studio-list">
+            {(state?.invoices ?? []).map((inv) => (
+              <div key={inv.id} className="studio-list-item">
+                <span className="studio-list-icon">
+                  <CreditCard className="size-3.5" />
+                </span>
+                <div className="studio-list-body">
+                  <p className="studio-list-title">
+                    {inv.pack} · ₹{inv.amountInr} · +{inv.credits} credits
+                  </p>
+                  <p className="studio-list-meta">
+                    {inv.at ? new Date(inv.at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : ""}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </>
   );

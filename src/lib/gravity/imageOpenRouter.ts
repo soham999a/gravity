@@ -67,11 +67,13 @@ interface ImagesResponse {
  */
 export async function generatePaidImage(
   prompt: string,
-  opts?: { width?: number; height?: number; runId?: string; model?: ImageModelId },
+  opts?: { width?: number; height?: number; runId?: string; model?: ImageModelId; apiKey?: string },
 ): Promise<PaidImageResult> {
   const model = paidModel(opts?.model);
   if (!model) throw new Error("paid image unavailable (free mode or no OPENROUTER_API_KEY)");
-  const key = process.env.OPENROUTER_API_KEY!;
+  const { activeProviderKey } = await import("@/lib/billing");
+  const key = activeProviderKey() ?? opts?.apiKey ?? process.env.OPENROUTER_API_KEY!;
+  if (!key) throw new Error("paid image unavailable (no key)");
 
   const width = opts?.width ?? 1024;
   const height = opts?.height ?? 1024;

@@ -100,7 +100,10 @@ async function startMission(prompt: string, files?: CsvFile[], forceStrategy?: s
     body: JSON.stringify({ prompt, files, forceStrategy: forceStrategy ?? undefined, imageModel: imageModel ?? undefined }),
     credentials: "include",
   });
-  if (!res.ok) throw new Error(`Status ${res.status}`);
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `Status ${res.status}`);
+  }
   const json = (await res.json()) as { missionId: string };
   kickExecute(json.missionId);
   return json.missionId;

@@ -161,6 +161,14 @@ export async function POST(request: Request) {
     }
   }
 
+  // Billing gate per chunk: BYOK → wallet → paid-only (no free benchmark).
+  const { authorize, settle, runWithKey } = await import("@/lib/billing");
+  const authz = await authorize(ctx.uid, "bench_chunk");
+  if (!authz.ok) {
+    return NextResponse.json({ error: authz.reason }, { status: authz.code });
+  }
+  const byokKey = authz.mode === "byok" ? authz.key : undefined;
+
   const wantSSE = (request.headers.get("accept") ?? "").includes("text/event-stream");
   const progress: RunnerProgress[] = [];
   const logProgress = (p: RunnerProgress) => {
@@ -170,16 +178,19 @@ export async function POST(request: Request) {
 
   if (!wantSSE) {
     try {
-      const payload = await runBenchmark({
-        systems,
-        classes,
-        runsPerClass,
-        seed,
-        runId: appendRunId,
-        signal: request.signal,
-        onProgress: logProgress,
-      }).then(async (result) => {
+      const payload = await runWithKey(byokKey, () =>
+        runBenchmark({
+          systems,
+          classes,
+          runsPerClass,
+          seed,
+          runId: appendRunId,
+          signal: request.signal,
+          onProgress: logProgress,
+        }),
+      ).then(async (result) => {
         const persisted = await saveBenchmarkRun(result.manifest, result.records);
+        void settle(ctx.uid, "bench_chunk", authz.mode);
         return { ...result, ...persisted, progress };
       });
       return NextResponse.json(payload);
@@ -206,19 +217,22 @@ export async function POST(request: Request) {
         }
       };
       try {
-        const result = await runBenchmark({
-          systems,
-          classes,
-          runsPerClass,
-          seed,
-          runId: appendRunId,
-          signal: request.signal,
-          onProgress: (p) => {
-            logProgress(p);
-            send({ type: "progress", ...p });
-          },
-        });
+        const result = await runWithKey(byokKey, () =>
+          runBenchmark({
+            systems,
+            classes,
+            runsPerClass,
+            seed,
+            runId: appendRunId,
+            signal: request.signal,
+            onProgress: (p) => {
+              logProgress(p);
+              send({ type: "progress", ...p });
+            },
+          }),
+        );
         const persisted = await saveBenchmarkRun(result.manifest, result.records);
+        void settle(ctx.uid, "bench_chunk", authz.mode);
         send({ type: "result", ...result, ...persisted, progress });
       } catch (err) {
         console.error("[benchmark] run failed:", err);

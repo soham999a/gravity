@@ -46,6 +46,13 @@ export async function POST(request: Request) {
     );
   }
 
+  // Billing gate: BYOK → wallet → free daily trial (3 refines/day).
+  const { authorize } = await import("@/lib/billing");
+  const authz = await authorize(ctx.uid, "refine");
+  if (!authz.ok) {
+    return NextResponse.json({ error: authz.reason }, { status: authz.code });
+  }
+
   let body: RefineBody;
   try {
     body = (await request.json()) as RefineBody;
@@ -88,7 +95,10 @@ export async function POST(request: Request) {
         width,
         height,
         model: picked,
+        apiKey: authz.mode === "byok" ? authz.key : undefined,
       });
+      const { settle: settlePaid } = await import("@/lib/billing");
+      void settlePaid(ctx.uid, "refine", authz.mode);
       return NextResponse.json({
         ok: true,
         image: {
@@ -111,6 +121,9 @@ export async function POST(request: Request) {
   const gen = generateImageURL(plan.imagePrompt, { seed, width, height });
   // Warm it so the UI shows a finished image instead of "still rendering".
   void warmupImage(gen.url).catch(() => {});
+
+  const { settle } = await import("@/lib/billing");
+  void settle(ctx.uid, "refine", authz.mode);
 
   return NextResponse.json({
     ok: true,

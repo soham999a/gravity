@@ -5,6 +5,13 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const CODECRAFT_URL = "https://codecraftapi.com/v1/chat/completions";
 const CLEANAPIS_URL = "https://cleanapis.com/v1/chat/completions";
 
+import { activeProviderKey } from "@/lib/billing";
+
+/** OpenRouter key preference: request context (BYOK) → explicit opt → env. */
+function openRouterKey(explicit?: string): string | undefined {
+  return activeProviderKey() ?? explicit ?? process.env.OPENROUTER_API_KEY;
+}
+
 /**
  * 429-aware throttle handling: when a provider returns RESOURCE_EXHAUSTED,
  * wait out the provider-suggested delay (up to 20s locally; Vercel's 60s
@@ -110,6 +117,9 @@ export interface LLMOpts {
   /** Explicit model override — honored by the OpenAI-compatible providers
    *  (deepseek/openrouter) for benchmark provider pinning. */
   model?: string;
+  /** Caller-supplied OpenRouter key (BYOK) — preferred over env for the
+   *  openrouter rung. AsyncLocalStorage active key wins if both present. */
+  apiKey?: string;
   /** Per-provider attempt timeout. Keep under serverless limits so the
    *  provider chain can actually fail over inside the function window. */
   timeoutMs?: number;
@@ -130,14 +140,14 @@ function providerChain(): ProviderName[] {
   // then OpenRouter (one key, every pinned model incl. Claude/OpenAI), then
   // the CodeCraft free-plan proxy (Opus-class access, unverified SLA — last rung).
   if (process.env.DEEPSEEK_API_KEY) all.push("deepseek");
-  if (process.env.OPENROUTER_API_KEY) all.push("openrouter");
+  if (process.env.OPENROUTER_API_KEY || activeProviderKey()) all.push("openrouter");
   if (process.env.CODECRAFT_API_KEY) all.push("codecraft");
   if (process.env.CLEANAPIS_API_KEY) all.push("cleanapis");
   return [...new Set(all)].filter((p) => {
     if (p === "gemini") return Boolean(process.env.GEMINI_API_KEY);
     if (p === "groq") return Boolean(process.env.GROQ_API_KEY);
     if (p === "deepseek") return Boolean(process.env.DEEPSEEK_API_KEY);
-    if (p === "openrouter") return Boolean(process.env.OPENROUTER_API_KEY);
+    if (p === "openrouter") return Boolean(process.env.OPENROUTER_API_KEY || activeProviderKey());
     if (p === "codecraft") return Boolean(process.env.CODECRAFT_API_KEY);
     if (p === "cleanapis") return Boolean(process.env.CLEANAPIS_API_KEY);
     if (p === "ollama") return true; // local default URL
@@ -395,13 +405,17 @@ async function callOpenAICompatible(
       : isCleanApis
         ? CLEANAPIS_URL
         : OPENROUTER_URL;
+  const orKey = openRouterKey(opts.apiKey);
   const key = isDeepSeek
     ? process.env.DEEPSEEK_API_KEY!
     : isCodeCraft
       ? process.env.CODECRAFT_API_KEY!
       : isCleanApis
         ? process.env.CLEANAPIS_API_KEY!
-        : process.env.OPENROUTER_API_KEY!;
+        : orKey!;
+  if (!isDeepSeek && !isCodeCraft && !isCleanApis && !orKey) {
+    throw new Error("OPENROUTER_API_KEY_MISSING");
+  }
   const primaryModel = opts.model ?? (isDeepSeek
     ? process.env.DEEPSEEK_MODEL ?? "deepseek-flash"
     : isCodeCraft
@@ -523,8 +537,8 @@ async function callOpenAICompatible(
 export async function streamOpenRouter(
   opts: LLMOpts & { onDelta: (chunk: string) => void; signal?: AbortSignal },
 ): Promise<LLMResult> {
-  if (!process.env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY_MISSING");
-  const key = process.env.OPENROUTER_API_KEY;
+  if (!process.env.OPENROUTER_API_KEY && !openRouterKey(opts.apiKey)) throw new Error("OPENROUTER_API_KEY_MISSING");
+  const key = openRouterKey(opts.apiKey)!;
   const primaryModel = opts.model ?? process.env.OPENROUTER_MODEL ?? "deepseek/deepseek-v4.1-flash";
 
   const plan: string[] = [];
