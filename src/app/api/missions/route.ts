@@ -14,6 +14,8 @@ let lastStaleSweep = 0;
 interface CsvFile {
   data: string;
   name: string;
+  kind?: string;
+  size?: number;
 }
 
 export async function GET(request: Request) {
@@ -68,14 +70,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "prompt exceeds 4000 characters" }, { status: 413 });
     }
     try {
-      const { sanitizePrompt, sanitizeFileName, validateCsv, FREE_MONTHLY_TOKENS } =
+      const { sanitizePrompt, sanitizeFileName, validateFile, FREE_MONTHLY_TOKENS, ATTACH_MAX_FILES } =
         await import("@/lib/validate");
       prompt = sanitizePrompt(prompt);
       if (body.files) {
-        if (body.files.length > 5) throw new Error("max 5 files");
+        if (body.files.length > ATTACH_MAX_FILES) throw new Error(`max ${ATTACH_MAX_FILES} files`);
         for (const f of body.files) {
-          validateCsv(f.data);
+          const checked = validateFile(f);
           f.name = sanitizeFileName(f.name);
+          f.kind = checked.kind;
+          f.data = checked.data;
         }
       }
       // Server-side monthly token budget (client meter is display-only).

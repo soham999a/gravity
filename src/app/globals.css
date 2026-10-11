@@ -1482,6 +1482,50 @@
   color: var(--color-muted-foreground);
   background: rgba(184, 150, 12, 0.04);
 }
+/* Every-file attach UX: error line, list head, kind badge, thumbnails. */
+.gravity-composer-error {
+  margin: 8px 12px 0;
+  font-size: 11px;
+  color: var(--color-danger-text);
+}
+.gravity-composer-files-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--color-muted-foreground);
+  border-bottom: 1px solid var(--color-border);
+}
+.gravity-composer-clear {
+  margin-left: auto;
+  cursor: pointer;
+  color: var(--color-muted-foreground);
+}
+.gravity-composer-clear:hover {
+  color: var(--color-gold);
+}
+.gravity-composer-file-kind {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: var(--color-gold-dim);
+  border: 1px solid var(--color-border-light);
+  border-radius: 3px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+}
+.gravity-composer-thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--color-border-light);
+  flex-shrink: 0;
+}
 .gravity-composer-attach {
   display: inline-flex;
   align-items: center;
@@ -5957,6 +6001,23 @@
 .chat-bone .gravity-composer-file {
   color: #3d382e;
   border-bottom-color: #e9e2d2;
+}
+.chat-bone .gravity-composer-files-head {
+  color: #6e675c;
+  border-bottom-color: #e9e2d2;
+}
+.chat-bone .gravity-composer-clear {
+  color: #6e675c;
+}
+.chat-bone .gravity-composer-clear:hover {
+  color: #8a6f09;
+}
+.chat-bone .gravity-composer-file-kind {
+  color: #8a6f09;
+  border-color: #d8d0bd;
+}
+.chat-bone .gravity-composer-error {
+  color: #a32e2e;
 }
 .chat-bone .gravity-composer-attach {
   border-color: #d8d0bd;

@@ -1472,7 +1472,7 @@ export async function createMissionWithPlan(
   ctx?: {
     tenantId?: string;
     userId?: string;
-    files?: { data: string; name: string }[];
+    files?: { data: string; name: string; kind?: string; size?: number }[];
     /** "adaptive" (default) uses the Thompson-sampling kernel; "static" pins
      *  the legacy heuristic router — the GRAVITY-STATIC benchmark baseline
      *  that isolates the architecture's contribution. */
@@ -1487,12 +1487,18 @@ export async function createMissionWithPlan(
     imageModel?: string;
   },
 ) {
-  // If files are provided, embed them in the prompt using the data marker
+  // If files are provided, embed them in the prompt using data markers.
+  // csv → stats engine; text → model context; image/file → one-line note
+  // (binary never travels — client sends metadata only).
   let effectivePrompt = prompt;
   if (ctx?.files && ctx.files.length > 0) {
-    const markers = ctx.files.map(
-      (f) => `[DATA:csv:${f.name}]\n${f.data}\n[/DATA]`,
-    );
+    const markers = ctx.files.map((f) => {
+      const kind = (f as { kind?: string }).kind ?? "csv";
+      if (kind === "text") return `[DATA:text:${f.name}]\n${f.data}\n[/DATA]`;
+      if (kind === "image" || kind === "file")
+        return `[DATA:file:${f.name}]\n(attached ${kind}: ${f.name} — content not embedded)\n[/DATA]`;
+      return `[DATA:csv:${f.name}]\n${f.data}\n[/DATA]`;
+    });
     effectivePrompt = markers.join("\n\n") + "\n\n" + prompt;
   }
 

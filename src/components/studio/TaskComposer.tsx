@@ -1,12 +1,36 @@
 "use client";
 
 import * as React from "react";
-import { ArrowRight, FileSpreadsheet, Paperclip, X } from "lucide-react";
+import { ArrowRight, FileImage, FileSpreadsheet, FileText, Paperclip, X } from "lucide-react";
 import { IMAGE_MODELS, type ImageModelId } from "@/lib/gravity/imageModels";
+
+export type AttachKind = "csv" | "text" | "image" | "file";
 
 export interface CsvFile {
   data: string;
   name: string;
+  kind: AttachKind;
+  size: number;
+}
+
+/** Every file is attachable. Text goes to the engine; images preview;
+ *  anything else rides as metadata (never binary in the prompt). */
+const TEXT_EXTS = new Set([
+  "csv", "tsv", "txt", "md", "markdown", "json", "jsonl", "log",
+  "js", "ts", "tsx", "jsx", "py", "rb", "go", "rs", "java", "c",
+  "h", "cpp", "cs", "html", "css", "xml", "yaml", "yml", "toml",
+  "ini", "cfg", "sql", "sh", "r", "scala", "kt",
+]);
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"]);
+const MAX_FILES = 5;
+const MAX_TEXT_CHARS = 8000;
+
+export function kindOf(name: string, type: string): AttachKind {
+  const ext = (name.split(".").pop() ?? "").toLowerCase();
+  if (type.startsWith("image/") || IMAGE_EXTS.has(ext)) return "image";
+  if (ext === "csv" || ext === "tsv") return "csv";
+  if (TEXT_EXTS.has(ext) || type.startsWith("text/")) return "text";
+  return "file";
 }
 
 export function TaskComposer({
@@ -24,11 +48,14 @@ export function TaskComposer({
 }) {
   const [prompt, setPrompt] = React.useState(initialValue);
   const [files, setFiles] = React.useState<CsvFile[]>([]);
+  const [previews, setPreviews] = React.useState<Record<string, string>>({});
+  const [attachError, setAttachError] = React.useState<string | null>(null);
   const [imageModel, setImageModel] = React.useState<ImageModelId>("auto");
   const [dragOver, setDragOver] = React.useState(false);
   const [boxHeight, setBoxHeight] = React.useState<number | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const canSubmit = prompt.trim().length > 0 && !busy;
+  const textChars = files.reduce((s, f) => s + (f.kind === "csv" || f.kind === "text" ? f.data.length : 0), 0);
 
   /** Drag the divider line to resize the chatbox (pointer + keyboard). */
   const resizeFrom = React.useRef({ y: 0, h: 0 });
@@ -49,14 +76,36 @@ export function TaskComposer({
   };
 
   const addFile = (file: File) => {
-    if (!file.name.endsWith(".csv") && !file.name.endsWith(".tsv") && !file.name.endsWith(".txt")) {
+    setAttachError(null);
+    if (files.length >= MAX_FILES) {
+      setAttachError(`Max ${MAX_FILES} files — remove one first.`);
+      return;
+    }
+    const kind = kindOf(file.name, file.type);
+    if (kind === "image") {
+      // Preview only — binary never enters the prompt or the database.
+      const url = URL.createObjectURL(file);
+      const key = `${file.name}-${file.size}`;
+      setPreviews((p) => ({ ...p, [key]: url }));
+      setFiles((prev) => [...prev, { data: "", name: file.name, kind, size: file.size }]);
+      return;
+    }
+    if (kind === "file") {
+      // Metadata only: name + size ride a one-line marker (no binary).
+      setFiles((prev) => [...prev, { data: "", name: file.name, kind, size: file.size }]);
       return;
     }
     const reader = new FileReader();
     reader.onload = () => {
-      const csv = reader.result as string;
-      setFiles((prev) => [...prev, { data: csv, name: file.name }]);
+      const raw = typeof reader.result === "string" ? reader.result : "";
+      const data = raw.length > MAX_TEXT_CHARS ? `${raw.slice(0, MAX_TEXT_CHARS)}\n…[truncated at ${MAX_TEXT_CHARS} chars]` : raw;
+      setFiles((prev) =>
+        prev.length >= MAX_FILES
+          ? prev
+          : [...prev, { data, name: file.name, kind, size: file.size }],
+      );
     };
+    reader.onerror = () => setAttachError(`Couldn't read ${file.name}.`);
     reader.readAsText(file);
   };
 
@@ -89,7 +138,28 @@ export function TaskComposer({
   };
 
   const removeFile = (index: number) => {
-    setFiles((prev) => prev.filter((_, i) => i !== index));
+    setFiles((prev) => {
+      const gone = prev[index];
+      if (gone && gone.kind === "image") {
+        const key = `${gone.name}-${gone.size}`;
+        const url = previews[key];
+        if (url) URL.revokeObjectURL(url);
+        setPreviews((p) => {
+          const next = { ...p };
+          delete next[key];
+          return next;
+        });
+      }
+      return prev.filter((_, i) => i !== index);
+    });
+    setAttachError(null);
+  };
+
+  const clearFiles = () => {
+    Object.values(previews).forEach((url) => URL.revokeObjectURL(url));
+    setPreviews({});
+    setFiles([]);
+    setAttachError(null);
   };
 
   const submit = () => {
@@ -106,7 +176,10 @@ export function TaskComposer({
     setFiles([]);
   };
 
-  const totalSize = files.reduce((sum, f) => sum + new TextEncoder().encode(f.data).length, 0);
+  const totalSize = files.reduce(
+    (sum, f) => sum + (f.kind === "csv" || f.kind === "text" ? new TextEncoder().encode(f.data).length : f.size),
+    0,
+  );
 
   const fmtKB = (bytes: number) =>
     bytes < 1024
@@ -126,7 +199,6 @@ export function TaskComposer({
       <input
         ref={fileInputRef}
         type="file"
-        accept=".csv,.tsv,.txt"
         multiple
         className="hidden"
         onChange={(e) => {
@@ -135,25 +207,45 @@ export function TaskComposer({
         }}
       />
 
+      {attachError ? (
+        <p className="gravity-composer-error" role="alert">{attachError}</p>
+      ) : null}
+
       {files.length > 0 ? (
         <div className="gravity-composer-files">
-          {files.map((f, i) => (
-            <div key={`${f.name}-${i}`} className="gravity-composer-file">
-              <FileSpreadsheet className="size-4 text-gold shrink-0" />
-              <span className="truncate max-w-[180px]">{f.name}</span>
-              <span className="gravity-composer-file-size">
-                {fmtKB(new TextEncoder().encode(f.data).length)}
-              </span>
-              <button
-                type="button"
-                onClick={() => removeFile(i)}
-                className="ml-auto text-[color:var(--color-muted-foreground)] hover:text-gold shrink-0"
-                aria-label={`Remove ${f.name}`}
-              >
-                <X className="size-3.5" />
-              </button>
-            </div>
-          ))}
+          <div className="gravity-composer-files-head">
+            <span>{files.length}/{MAX_FILES} attached</span>
+            <span>{fmtKB(textChars)} text</span>
+            <button type="button" onClick={clearFiles} className="gravity-composer-clear">
+              Clear all
+            </button>
+          </div>
+          {files.map((f, i) => {
+            const Icon = f.kind === "csv" ? FileSpreadsheet : f.kind === "image" ? FileImage : FileText;
+            const thumb = f.kind === "image" ? previews[`${f.name}-${f.size}`] : undefined;
+            return (
+              <div key={`${f.name}-${i}`} className="gravity-composer-file">
+                {thumb ? (
+                  <img src={thumb} alt="" aria-hidden="true" className="gravity-composer-thumb" />
+                ) : (
+                  <Icon className="size-4 text-gold shrink-0" />
+                )}
+                <span className="truncate max-w-[180px]">{f.name}</span>
+                <span className="gravity-composer-file-kind">{f.kind.toUpperCase()}</span>
+                <span className="gravity-composer-file-size">
+                  {fmtKB(f.kind === "csv" || f.kind === "text" ? f.data.length : f.size)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeFile(i)}
+                  className="ml-auto text-[color:var(--color-muted-foreground)] hover:text-gold shrink-0"
+                  aria-label={`Remove ${f.name}`}
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            );
+          })}
           <div className="gravity-composer-file-summary">
             {files.length} file{files.length > 1 ? "s" : ""} · {fmtKB(totalSize)} total
           </div>
@@ -220,10 +312,10 @@ export function TaskComposer({
             type="button"
             onClick={() => fileInputRef.current?.click()}
             className="gravity-composer-attach"
-            title="Attach CSV files"
+            title="Attach any file — CSV, text, code, images"
           >
             <Paperclip className="size-3.5" />
-            <span className="hidden sm:inline">{files.length > 0 ? "Add more" : "CSV"}</span>
+            <span className="hidden sm:inline">{files.length > 0 ? "Add more" : "Attach"}</span>
           </button>
           <label className="flex items-center gap-1.5" title="Image model — used when GRAVITY routes to image generation">
             <span className="gravity-composer-hint hidden sm:inline">IMG</span>

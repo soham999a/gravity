@@ -5,6 +5,10 @@ export const CSV_MAX_BYTES = 2_000_000;
 export const CSV_MAX_ROWS = 20_000;
 export const CSV_MAX_COLS = 50;
 export const FREE_MONTHLY_TOKENS = 250_000;
+/** Every-file attach: text kinds ride content (capped), images/metadata ride notes. */
+export const TEXT_MAX_CHARS = 8000;
+export const ATTACH_MAX_FILES = 5;
+const SAFE_NAME = /^[a-zA-Z0-9._-]+$/;
 
 export function sanitizePrompt(prompt: string): string {
   // Strip control chars + cap [DATA:] blocks (prompt-injection / DoS guard).
@@ -15,10 +19,37 @@ export function sanitizePrompt(prompt: string): string {
 }
 
 export function sanitizeFileName(name: string): string {
-  const base = name.split(/[\\/]/).pop() ?? "uploaded.csv";
+  const base = name.split(/[\\/]/).pop() ?? "upload.bin";
   const clean = base.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
-  if (!/\.(csv|tsv|txt)$/i.test(clean)) throw new Error("only .csv/.tsv/.txt allowed");
+  if (!clean || !SAFE_NAME.test(clean)) throw new Error("unsafe file name");
   return clean;
+}
+
+export type AttachKind = "csv" | "text" | "image" | "file";
+
+/**
+ * Per-kind server validation. CSV keeps the strict stats-engine checks;
+ * text is capped (prompt/context guard); image/file carry metadata only —
+ * binary is never accepted (client sends data:"" for those).
+ */
+export function validateFile(f: { data?: string; name: string; kind?: string; size?: number }): {
+  kind: AttachKind;
+  data: string;
+} {
+  const kind: AttachKind =
+    f.kind === "csv" || f.kind === "text" || f.kind === "image" || f.kind === "file" ? f.kind : "file";
+  const data = typeof f.data === "string" ? f.data : "";
+  if (kind === "csv") {
+    validateCsv(data);
+    return { kind, data };
+  }
+  if (kind === "text") {
+    if (data.length < 1) throw new Error("text file is empty");
+    if (data.length > TEXT_MAX_CHARS + 200) throw new Error(`text file exceeds ${TEXT_MAX_CHARS} chars`);
+    return { kind, data: data.slice(0, TEXT_MAX_CHARS) };
+  }
+  if (data.length > 0) throw new Error("binary payload rejected — metadata only");
+  return { kind, data: "" };
 }
 
 export function validateCsv(csv: string): { rows: number; cols: number } {
