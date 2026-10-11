@@ -607,6 +607,22 @@ export function MissionRun({
 
         {!running && !failed ? <HeroStatsStrip stats={heroStats} /> : null}
 
+        {!running && !outputText.trim() ? (
+          <div className="studio-empty-result">
+            <p className="studio-eyebrow">EMPTY RESULT</p>
+            <p className="mt-2 text-sm text-ivory">
+              {failed || mission.status === "failed"
+                ? "The run failed before producing output — the reason is shown above."
+                : "This run settled without any output. Nothing was fabricated to fill the gap."}
+            </p>
+            {onRetry ? (
+              <button type="button" onClick={() => void onRetry()} className="studio-secondary-button mt-3">
+                <RotateCcw className="size-3.5" /> Retry run
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         {!running && !failed && outputText ? (
           <>            <ResultSurface
               prompt={mission.prompt}

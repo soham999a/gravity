@@ -14,6 +14,7 @@ import {
   Maximize2,
   MessageCircle,
   Minimize2,
+  Plus,
   Timer,
   X,
   Zap,
@@ -130,6 +131,12 @@ function HomeContent() {
   const [chatOpen, setChatOpen] = React.useState(false);
   const [chatMax, setChatMax] = React.useState(false);
   const chatPopupRef = React.useRef<HTMLDivElement>(null);
+  // Create lives in the same popup pattern — same TaskComposer, same work.
+  const [createOpen, setCreateOpen] = React.useState(false);
+  const [createMax, setCreateMax] = React.useState(false);
+  const createPopupRef = React.useRef<HTMLDivElement>(null);
+  // Fresh composer drafts: bump to wipe the box (history stays in LIVE THREAD).
+  const [composerKey, setComposerKey] = React.useState(0);
 
   const focusChatInput = React.useCallback(() => {
     requestAnimationFrame(() => {
@@ -137,28 +144,47 @@ function HomeContent() {
     });
   }, []);
 
+  const focusCreateInput = React.useCallback(() => {
+    requestAnimationFrame(() => {
+      (createPopupRef.current?.querySelector("textarea") as HTMLTextAreaElement | null)?.focus();
+    });
+  }, []);
+
+  /** New create: fresh composer + no result — history stays switchable below. */
+  const newCreate = React.useCallback(() => {
+    setMissionId(null);
+    setPrefill("");
+    setSubmitError(null);
+    setComposerKey((k) => k + 1);
+    focusCreateInput();
+  }, [focusCreateInput]);
+
   // Giant-grade keys: Cmd/Ctrl+J toggles chat from anywhere (Ctrl+K belongs
   // to the command palette — search wins that shortcut everywhere), ESC
-  // closes (but never hijacks the chat input's own ESC-to-stop).
+  // closes any popup (but never hijacks inputs' own ESC handling).
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey;
       if (mod && event.key.toLowerCase() === "j") {
         event.preventDefault();
         setChatOpen((was) => {
-          if (!was) setMode("chat");
+          if (!was) {
+            setMode("chat");
+            setCreateOpen(false);
+          }
           return !was;
         });
         focusChatInput();
         return;
       }
-      if (chatOpen && event.key === "Escape" && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) {
+      if (event.key === "Escape" && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) {
         setChatOpen(false);
+        setCreateOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [chatOpen, focusChatInput]);
+  }, [chatOpen, createOpen, focusChatInput]);
   // Simulator pairs: original run ↔ forced-strategy re-run, for side-by-side compare.
   const [simPairs, setSimPairs] = React.useState<{ original: string; simulated: string; strategy: string | null }[]>([]);
 
@@ -210,10 +236,17 @@ function HomeContent() {
   }, [searchParams]);
 
   React.useEffect(() => {
-    if (runRef.current && missionId) {
+    if (!missionId) return;
+    // Results live inside the create modal: scroll its body, not the page.
+    const body = createPopupRef.current?.querySelector(".create-popup-body");
+    if (createOpen && body) {
+      requestAnimationFrame(() => {
+        body.scrollTo({ top: body.scrollHeight, behavior: "smooth" });
+      });
+    } else if (runRef.current) {
       runRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-  }, [missionId]);
+  }, [missionId, createOpen]);
 
   const runMission = async (prompt: string, files?: CsvFile[], imageModel?: string) => {
     setBusy(true);
@@ -239,6 +272,8 @@ function HomeContent() {
       setAuthOpen(true);
       return;
     }
+    // Run starts → the popup STAYS open: composer + LIVE THREAD + results
+    // all live inside the modal. Unauthed opens the sign-in gate above it.
     void runMission(prompt, files, imageModel);
   };
 
@@ -344,14 +379,15 @@ function HomeContent() {
             <div className="mb-3 flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => { setMode("mission"); setChatOpen(false); }}
+                onClick={() => { setMode("mission"); setChatOpen(false); setCreateOpen(true); focusCreateInput(); }}
+                title="Open create"
                 className={mode === "mission" ? "studio-primary-button px-4 py-1.5" : "studio-secondary-button px-4 py-1.5"}
               >
                 Create
               </button>
               <button
                 type="button"
-                onClick={() => { setMode("chat"); setChatOpen(true); focusChatInput(); }}
+                onClick={() => { setMode("chat"); setChatOpen(true); setCreateOpen(false); focusChatInput(); }}
                 title="Open chat (Ctrl/⌘+J)"
                 className={mode === "chat" ? "studio-primary-button px-4 py-1.5" : "studio-secondary-button px-4 py-1.5"}
               >
@@ -362,20 +398,16 @@ function HomeContent() {
               </span>
             </div>
             {mode === "mission" ? (
-              <>
-                <TaskComposer
-                  key={prefill || "fresh"}
-                  initialValue={prefill}
-                  busy={busy}
-                  autoFocus={focusComposer}
-                  onSubmit={submit}
-                />
-                {submitError ? (
-                  <p className="mt-3 border border-danger/30 bg-danger/5 px-4 py-2 text-xs text-[color:var(--color-danger-text)]">
-                    {submitError}
-                  </p>
-                ) : null}
-              </>
+              <div className="rounded-lg border border-border bg-surface p-4 text-center">
+                <p className="text-sm text-ivory">Create lives in its popup — composer, files, image models, all of it.</p>
+                <button
+                  type="button"
+                  onClick={() => { setCreateOpen(true); focusCreateInput(); }}
+                  className="studio-primary-button mt-3 px-4 py-2"
+                >
+                  <Zap className="size-3.5" /> Reopen create
+                </button>
+              </div>
             ) : (
               <div className="rounded-lg border border-border bg-surface p-4 text-center">
                 <p className="text-sm text-ivory">Chat lives in its popup — threads, streaming, retry, all of it.</p>
@@ -444,6 +476,124 @@ function HomeContent() {
           </div>
         </div>
       </div>
+      <div
+        ref={createPopupRef}
+        className="chat-popup-overlay"
+        hidden={!createOpen}
+        aria-hidden={!createOpen}
+      >
+        <div
+          className="chat-popup-overlay-scrim"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setCreateOpen(false);
+          }}
+        >
+          <div className={`chat-popup${createMax ? " chat-popup-max" : ""}`} role="dialog" aria-modal="true" aria-label="GRAVITY create">
+            <div className="chat-popup-head" onDoubleClick={() => setCreateMax((v) => !v)} title="Double-click to maximize">
+              <div>
+                <p className="meta chat-popup-eyebrow">GRAVITY CREATE</p>
+                <p className="chat-popup-title">Heavy jobs — images, sites, data.</p>
+              </div>
+              <div className="chat-popup-actions">
+                <span className="chat-popup-hint" title="ESC closes">ESC</span>
+                <button
+                  type="button"
+                  className="chat-popup-close"
+                  onClick={() => setCreateMax((v) => !v)}
+                  aria-label={createMax ? "Restore create size" : "Maximize create"}
+                >
+                  {createMax ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+                </button>
+                <button
+                  type="button"
+                  className="chat-popup-close"
+                  onClick={() => setCreateOpen(false)}
+                  aria-label="Close create"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+            </div>
+            <div className="create-popup-body">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <p className="meta">COMPOSER {thread.length > 0 ? `· ${thread.length} IN HISTORY` : ""}</p>
+                {(missionId || thread.length > 0) ? (
+                  <button
+                    type="button"
+                    onClick={newCreate}
+                    className="studio-secondary-button px-3 py-1.5"
+                    title="Fresh composer — history stays below"
+                  >
+                    <Plus className="size-3.5" /> New create
+                  </button>
+                ) : null}
+              </div>
+              <TaskComposer
+                key={`${prefill || "fresh"}-${composerKey}`}
+                initialValue={prefill}
+                busy={busy}
+                autoFocus={focusComposer}
+                onSubmit={submit}
+              />
+              {submitError ? (
+                <p className="mt-3 border border-danger/30 bg-danger/5 px-4 py-2 text-xs text-[color:var(--color-danger-text)]">
+                  {submitError}
+                </p>
+              ) : null}
+              {/* ── LIVE THREAD + results live inside the modal ── */}
+              <div ref={runRef}>
+                {thread.length > 0 ? (
+                  <section className="studio-thread mt-8">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="studio-eyebrow">LIVE THREAD</p>
+                      <span className="studio-meta">
+                        {thread.length} TURN{thread.length > 1 ? "S" : ""} THIS SESSION
+                      </span>
+                    </div>
+                    <div className="studio-thread-list mt-4">
+                      {thread.map((turn, index) => {
+                        const latest = index === thread.length - 1;
+                        const active = turn.id === missionId;
+                        return (
+                          <button
+                            key={turn.id}
+                            type="button"
+                            onClick={() => setMissionId(turn.id)}
+                            className={`studio-thread-item ${active ? "studio-thread-item-active" : ""}`}
+                          >
+                            <span className="studio-thread-index">{String(index + 1).padStart(2, "0")}</span>
+                            <span className="min-w-0 flex-1 truncate text-left text-sm text-[color:var(--color-ivory-dim)]">
+                              {displayPrompt(turn.prompt)}
+                            </span>
+                            {latest ? <span className="studio-example-chip !border-gold/40 !text-gold">LATEST</span> : null}
+                            {active ? (
+                              <span className="studio-meta">VIEWING</span>
+                            ) : (
+                              <ArrowRight className="size-3.5 shrink-0 text-[color:var(--color-muted-foreground)]" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+                ) : null}
+                {missionId ? (
+                  <div className={thread.length > 1 ? "mt-6" : "mt-6"}>
+                    <MissionRun
+                      missionId={missionId}
+                      onFollowUp={handleFollowUp}
+                      onRetry={handleRetry}
+                      onStatus={(status) => updateLocalStatus(missionId, status)}
+                      onSimulate={handleSimulate}
+                      compareWith={compareFor(missionId)}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
       <AuthModal
         open={authOpen}
         onClose={() => {
@@ -453,57 +603,6 @@ function HomeContent() {
         onSuccess={handleAuthSuccess}
         reason="Sign in and GRAVITY runs the task you just wrote — nothing is lost."
       />
-
-      <div ref={runRef}>
-
-        {thread.length > 0 ? (
-          <section className="studio-thread mt-16">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="studio-eyebrow">LIVE THREAD</p>
-              <span className="studio-meta">
-                {thread.length} TURN{thread.length > 1 ? "S" : ""} THIS SESSION
-              </span>
-            </div>
-            <div className="studio-thread-list mt-4">
-              {thread.map((turn, index) => {
-                const latest = index === thread.length - 1;
-                const active = turn.id === missionId;
-                return (
-                  <button
-                    key={turn.id}
-                    type="button"
-                    onClick={() => setMissionId(turn.id)}
-                    className={`studio-thread-item ${active ? "studio-thread-item-active" : ""}`}
-                  >
-                    <span className="studio-thread-index">{String(index + 1).padStart(2, "0")}</span>
-                    <span className="min-w-0 flex-1 truncate text-left text-sm text-[color:var(--color-ivory-dim)]">
-                      {displayPrompt(turn.prompt)}
-                    </span>
-                    {latest ? <span className="studio-example-chip !border-gold/40 !text-gold">LATEST</span> : null}
-                    {active ? (
-                      <span className="studio-meta">VIEWING</span>
-                    ) : (
-                      <ArrowRight className="size-3.5 shrink-0 text-[color:var(--color-muted-foreground)]" />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        ) : null}
-        {missionId ? (
-          <div className={thread.length > 1 ? "mt-6" : "mt-0"}>
-            <MissionRun
-              missionId={missionId}
-              onFollowUp={handleFollowUp}
-              onRetry={handleRetry}
-              onStatus={(status) => updateLocalStatus(missionId, status)}
-              onSimulate={handleSimulate}
-              compareWith={compareFor(missionId)}
-            />
-          </div>
-        ) : null}
-      </div>
 
       <section className="studio-section">
         <div className="flex flex-wrap items-end justify-between gap-6">
