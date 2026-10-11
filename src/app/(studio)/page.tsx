@@ -15,7 +15,9 @@ import {
   MessageCircle,
   Minimize2,
   Plus,
+  Search,
   Timer,
+  Trash2,
   X,
   Zap,
 } from "lucide-react";
@@ -110,7 +112,35 @@ function HomeContent() {
   const hydrate = useGravityUser((state) => state.hydrate);
   const { missions, loading, updateLocalStatus } = useMissionFeed();
   const [missionId, setMissionId] = React.useState<string | null>(null);
-  const [thread, setThread] = React.useState<{ id: string; prompt: string }[]>([]);
+  const [thread, setThread] = React.useState<{ id: string; prompt: string; createdAt: string }[]>([]);
+  // History persists like chat threads (mount-gated: server paints empty).
+  const [historyLoaded, setHistoryLoaded] = React.useState(false);
+  React.useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("gravity.create.history.v1");
+      if (raw) {
+        const arr = JSON.parse(raw) as { id: string; prompt: string; createdAt: string }[];
+        if (Array.isArray(arr)) setThread(arr.filter((t) => t && t.id).slice(0, 30));
+      }
+    } catch {
+      /* fresh history */
+    }
+    setHistoryLoaded(true);
+  }, []);
+  React.useEffect(() => {
+    if (!historyLoaded) return;
+    try {
+      window.localStorage.setItem("gravity.create.history.v1", JSON.stringify(thread.slice(0, 30)));
+    } catch {
+      /* quota — session-only */
+    }
+  }, [thread, historyLoaded]);
+
+  /** Remove a turn from history (the mission itself stays saved server-side). */
+  const removeTurn = React.useCallback((id: string) => {
+    setThread((prev) => prev.filter((t) => t.id !== id));
+    setMissionId((current) => (current === id ? null : current));
+  }, []);
   const [busy, setBusy] = React.useState(false);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const [prefill, setPrefill] = React.useState("");
@@ -137,6 +167,7 @@ function HomeContent() {
   const createPopupRef = React.useRef<HTMLDivElement>(null);
   // Fresh composer drafts: bump to wipe the box (history stays in LIVE THREAD).
   const [composerKey, setComposerKey] = React.useState(0);
+  const [createSearch, setCreateSearch] = React.useState("");
 
   const focusChatInput = React.useCallback(() => {
     requestAnimationFrame(() => {
@@ -255,7 +286,7 @@ function HomeContent() {
     try {
       const id = await startMission(prompt, files, null, imageModel);
       setMissionId(id);
-      setThread((prev) => [...prev, { id, prompt }]);
+      setThread((prev) => [...prev, { id, prompt, createdAt: new Date().toISOString() }]);
     } catch {
       setSubmitError(
         "GRAVITY could not start the task. Check your connection and try again in a moment.",
@@ -320,7 +351,7 @@ function HomeContent() {
     if (!original) return;
     const id = await startMission(original, undefined, strategy);
     setSimPairs((prev) => [...prev, { original: from, simulated: id, strategy }]);
-    setThread((prev) => [...prev, { id, prompt: original }]);
+    setThread((prev) => [...prev, { id, prompt: original, createdAt: new Date().toISOString() }]);
     setMissionId(id);
   };
 
@@ -514,81 +545,103 @@ function HomeContent() {
                 </button>
               </div>
             </div>
-            <div className="create-popup-body">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <p className="meta">COMPOSER {thread.length > 0 ? `· ${thread.length} IN HISTORY` : ""}</p>
-                {(missionId || thread.length > 0) ? (
+            <div className="create-popup-body chat-bone">
+              <div className="create-workspace">
+                {/* ── History rail (chat-style) ── */}
+                <aside className="create-rail">
                   <button
                     type="button"
                     onClick={newCreate}
-                    className="studio-secondary-button px-3 py-1.5"
-                    title="Fresh composer — history stays below"
+                    className="studio-secondary-button w-full"
                   >
                     <Plus className="size-3.5" /> New create
                   </button>
-                ) : null}
-              </div>
-              <TaskComposer
-                key={`${prefill || "fresh"}-${composerKey}`}
-                initialValue={prefill}
-                busy={busy}
-                autoFocus={focusComposer}
-                onSubmit={submit}
-              />
-              {submitError ? (
-                <p className="mt-3 border border-danger/30 bg-danger/5 px-4 py-2 text-xs text-[color:var(--color-danger-text)]">
-                  {submitError}
-                </p>
-              ) : null}
-              {/* ── LIVE THREAD + results live inside the modal ── */}
-              <div ref={runRef}>
-                {thread.length > 0 ? (
-                  <section className="studio-thread mt-8">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p className="studio-eyebrow">LIVE THREAD</p>
-                      <span className="studio-meta">
-                        {thread.length} TURN{thread.length > 1 ? "S" : ""} THIS SESSION
-                      </span>
-                    </div>
-                    <div className="studio-thread-list mt-4">
-                      {thread.map((turn, index) => {
-                        const latest = index === thread.length - 1;
-                        const active = turn.id === missionId;
-                        return (
-                          <button
+                  {thread.length > 3 ? (
+                    <label className="mt-3 flex items-center gap-2 rounded-md border border-border bg-surface px-2 py-1.5">
+                      <Search className="size-3.5 shrink-0 text-ivory-faint" />
+                      <input
+                        value={createSearch}
+                        onChange={(e) => setCreateSearch(e.target.value)}
+                        placeholder="Search history…"
+                        className="w-full bg-transparent text-xs text-ivory outline-none"
+                      />
+                    </label>
+                  ) : null}
+                  <div className="mt-3 space-y-1">
+                    {thread.length === 0 ? (
+                      <p className="meta px-1 py-2">No creates yet — run your first one.</p>
+                    ) : (
+                      thread
+                        .filter((t) =>
+                          createSearch.trim()
+                            ? t.prompt.toLowerCase().includes(createSearch.trim().toLowerCase())
+                            : true,
+                        )
+                        .map((turn, index) => (
+                          <div
                             key={turn.id}
-                            type="button"
-                            onClick={() => setMissionId(turn.id)}
-                            className={`studio-thread-item ${active ? "studio-thread-item-active" : ""}`}
+                            className={`chat-row group flex items-center gap-1.5 rounded-md px-2 py-1.5 ${
+                              turn.id === missionId ? "bg-gold-pale" : "hover:bg-surface"
+                            }`}
                           >
-                            <span className="studio-thread-index">{String(index + 1).padStart(2, "0")}</span>
-                            <span className="min-w-0 flex-1 truncate text-left text-sm text-[color:var(--color-ivory-dim)]">
-                              {displayPrompt(turn.prompt)}
-                            </span>
-                            {latest ? <span className="studio-example-chip !border-gold/40 !text-gold">LATEST</span> : null}
-                            {active ? (
-                              <span className="studio-meta">VIEWING</span>
-                            ) : (
-                              <ArrowRight className="size-3.5 shrink-0 text-[color:var(--color-muted-foreground)]" />
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </section>
-                ) : null}
-                {missionId ? (
-                  <div className={thread.length > 1 ? "mt-6" : "mt-6"}>
-                    <MissionRun
-                      missionId={missionId}
-                      onFollowUp={handleFollowUp}
-                      onRetry={handleRetry}
-                      onStatus={(status) => updateLocalStatus(missionId, status)}
-                      onSimulate={handleSimulate}
-                      compareWith={compareFor(missionId)}
-                    />
+                            <span className="meta shrink-0">{String(index + 1).padStart(2, "0")}</span>
+                            <button
+                              type="button"
+                              onClick={() => setMissionId(turn.id)}
+                              className="min-w-0 flex-1 text-left"
+                              title={displayPrompt(turn.prompt)}
+                            >
+                              <span className="block truncate text-sm leading-snug text-ivory">
+                                {displayPrompt(turn.prompt)}
+                              </span>
+                              <span className="meta">{timeAgo(turn.createdAt)}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeTurn(turn.id)}
+                              className="shrink-0 p-1 opacity-0 group-hover:opacity-100"
+                              title="Remove from history"
+                            >
+                              <Trash2 className="size-3.5 text-ivory-faint" />
+                            </button>
+                          </div>
+                        ))
+                    )}
                   </div>
-                ) : null}
+                </aside>
+                {/* ── Composer + active result ── */}
+                <div className="create-main">
+                  <TaskComposer
+                    key={`${prefill || "fresh"}-${composerKey}`}
+                    initialValue={prefill}
+                    busy={busy}
+                    autoFocus={focusComposer}
+                    onSubmit={submit}
+                  />
+                  {submitError ? (
+                    <p className="mt-3 border border-danger/30 bg-danger/5 px-4 py-2 text-xs text-[color:var(--color-danger-text)]">
+                      {submitError}
+                    </p>
+                  ) : null}
+                  <div ref={runRef}>
+                    {missionId ? (
+                      <div className="mt-6">
+                        <MissionRun
+                          missionId={missionId}
+                          onFollowUp={handleFollowUp}
+                          onRetry={handleRetry}
+                          onStatus={(status) => updateLocalStatus(missionId, status)}
+                          onSimulate={handleSimulate}
+                          compareWith={compareFor(missionId)}
+                        />
+                      </div>
+                    ) : thread.length > 0 ? (
+                      <p className="meta mt-6 text-center">Pick a turn from history — or New create above.</p>
+                    ) : (
+                      <p className="meta mt-6 text-center">Your result appears here — images, sites, data, briefs.</p>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>

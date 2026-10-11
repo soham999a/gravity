@@ -5900,6 +5900,81 @@
   background: #141414;
   flex: 1;
 }
+/* Bone workspace: history rail + composer share chat's bone palette.
+   Result cards (MissionRun) stay dark — intentional contrast, same as
+   dark code blocks inside bone chat. */
+.create-popup-body.chat-bone {
+  background: #e9e2d2;
+}
+.create-workspace {
+  display: grid;
+  gap: 16px;
+}
+@media (min-width: 900px) {
+  .create-workspace {
+    grid-template-columns: 230px minmax(0, 1fr);
+    align-items: start;
+  }
+}
+.create-rail {
+  background: #f5f1e8;
+  border: 1px solid #e3dccb;
+  border-radius: 8px;
+  padding: 12px;
+}
+.create-rail .studio-secondary-button {
+  border-color: #d8d0bd;
+  color: #6e675c;
+  background: #fffdf7;
+}
+.create-rail .studio-secondary-button:hover {
+  border-color: #8a6f09;
+  color: #8a6f09;
+}
+.create-rail input::placeholder {
+  color: #a39a87;
+}
+.create-main {
+  min-width: 0;
+}
+/* Bone composer zone */
+.chat-bone .gravity-composer {
+  background: #fffdf7;
+  border-color: #e3dccb;
+}
+.chat-bone .studio-prompt {
+  color: #201d17;
+}
+.chat-bone .studio-prompt::placeholder {
+  color: #a39a87;
+  opacity: 1;
+}
+.chat-bone .gravity-composer-hint,
+.chat-bone .gravity-composer-file-size,
+.chat-bone .gravity-composer-file-summary {
+  color: #6e675c;
+}
+.chat-bone .gravity-composer-file {
+  color: #3d382e;
+  border-bottom-color: #e9e2d2;
+}
+.chat-bone .gravity-composer-attach {
+  border-color: #d8d0bd;
+  color: #6e675c;
+  background: #fffdf7;
+}
+.chat-bone .gravity-composer-attach:hover {
+  border-color: #8a6f09;
+  color: #8a6f09;
+}
+.chat-bone .gravity-composer-bottom select {
+  background: #fffdf7;
+  border-color: #d8d0bd;
+  color: #201d17;
+}
+.chat-bone .gravity-composer-resize::before {
+  background: #e3dccb;
+}
 /* Popup thread breathes taller than the old inline slot */
 .chat-popup-body .chat-bone > aside,
 .chat-popup-body .chat-bone > div {
