@@ -796,7 +796,7 @@
   left: 0;
   right: 0;
   bottom: -1px;
-  height: 2px;
+  height: 1px;
   pointer-events: none;
   background:
     repeating-linear-gradient(
