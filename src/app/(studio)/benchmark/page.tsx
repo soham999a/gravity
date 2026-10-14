@@ -370,18 +370,38 @@ export default function BenchmarkPage() {
     runProgressRef.current = 0;
     const tickId = setInterval(() => setElapsedSec((s) => s + 1), 1000);
     const chunks = planChunks(plan.systems, plan.classes, plan.runsPerClass);
+    // Fresh id per attempt: completed chunks persist under their own runId
+    // (visible in history) — reusing an id would duplicate rows and skew
+    // the leaderboard means. In-run transport retries reuse the id safely
+    // because a failed chunk persists nothing.
     let runId: string | undefined;
     let stopped = false;
+    // One automatic resume per chunk on transport failure (dropped SSE,
+    // blipped wifi on a 15-min run) — server errors (402/400/500) fail fast.
+    const isTransportError = (err: unknown) =>
+      err instanceof TypeError ||
+      (err instanceof Error && /failed to fetch|network|load failed/i.test(err.message));
     try {
       for (const chunk of chunks) {
         const chunkCombos = chunk.systems.length * chunk.classes.length * chunk.runsPerClass;
         const doneBefore = runProgressRef.current;
-        const final = await runChunk(chunk, plan.seed, runId, controller.signal, doneBefore, chunkCombos, total);
-        runId = final.runId || runId;
+        let final: Awaited<ReturnType<typeof runChunk>> | null = null;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            final = await runChunk(chunk, plan.seed, runId, controller.signal, doneBefore, chunkCombos, total);
+            break;
+          } catch (err) {
+            if (controller.signal.aborted || !isTransportError(err) || attempt === 1) throw err;
+            setRunLog((prev) => [...prev.slice(-79), "net blip — resuming same chunk…"]);
+            await new Promise((r) => setTimeout(r, 4000));
+          }
+        }
+        const got = final!;
+        runId = got.runId || runId;
         runProgressRef.current = Math.min(total, doneBefore + chunkCombos);
-        setRunProgress({ done: runProgressRef.current, total, label: `chunk done · ${final.records.length} records` });
-        setSkippedSystems(final.skippedSystems);
-        if (final.aborted || controller.signal.aborted) {
+        setRunProgress({ done: runProgressRef.current, total, label: `chunk done · ${got.records.length} records` });
+        setSkippedSystems(got.skippedSystems);
+        if (got.aborted || controller.signal.aborted) {
           stopped = true;
           break;
         }
