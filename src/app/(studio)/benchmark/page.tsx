@@ -597,13 +597,21 @@ export default function BenchmarkPage() {
   }, []);
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-10 px-6 py-10">
+    <div className="bench-lab mx-auto w-full max-w-6xl space-y-10 px-6 py-10">
       {/* ── Header ── */}
-      <header className="space-y-3">
-        <p className="meta">06 / Benchmark Harness</p>
-        <h1 className="font-sans text-2xl font-light tracking-wide text-ivory">
-          BACKEND BENCHMARK RUNNER
-        </h1>
+      <header className="bench-hero">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="meta text-gold">06 / Benchmark Harness</p>
+            <h1 className="font-sans text-2xl font-light tracking-wide text-ivory">
+              BACKEND BENCHMARK RUNNER
+            </h1>
+          </div>
+          <div className="bench-live">
+            <span className="bench-live-dot" />
+            <span className="meta">LAB {phase === "running" ? "RUNNING" : "IDLE"}</span>
+          </div>
+        </div>
         <p className="max-w-3xl text-sm leading-relaxed text-ivory-faint">
           The backend instruments itself: the same five workload tasks run through
           competing systems and every run emits a BenchmarkRecord — the common
@@ -704,14 +712,20 @@ export default function BenchmarkPage() {
       <section className="bench-sticky flex flex-wrap items-center gap-4">
         <button
           type="button"
-          onClick={() =>
+          onClick={() => {
+            // FULL means full: sync the pickers first so the screen always
+            // shows exactly what is running (no split-brain selection).
+            setSelected(new Set<SystemId>(["GRAVITY", "GRAVITY-STATIC"]));
+            setSelectedClasses(new Set<ClassId>(["A", "B", "C", "D", "E"]));
+            setRunsPerClass(1);
+            setSeed(42);
             runBenchmark({
               systems: ["GRAVITY", "GRAVITY-STATIC"],
               classes: ["A", "B", "C", "D", "E"],
               runsPerClass: 1,
               seed: 42,
-            })
-          }
+            });
+          }}
           disabled={phase === "running"}
           title="One click: all 5 classes on the free lane (10 combos, auto-chunked, one merged result). JEV excluded — adapter not wired."
           className="studio-primary-button border-gold bg-gold px-5 py-2 font-semibold disabled:opacity-50"
@@ -720,14 +734,19 @@ export default function BenchmarkPage() {
         </button>
         <button
           type="button"
-          onClick={() =>
+          onClick={() => {
+            const all = SYSTEMS.filter((s) => !s.disabled && !s.hidden).map((s) => s.id);
+            setSelected(new Set(all));
+            setSelectedClasses(new Set<ClassId>(["A", "B", "C", "D", "E"]));
+            setRunsPerClass(1);
+            setSeed(42);
             runBenchmark({
-              systems: SYSTEMS.filter((s) => !s.disabled && !s.hidden).map((s) => s.id),
+              systems: all,
               classes: ["A", "B", "C", "D", "E"],
               runsPerClass: 1,
               seed: 42,
-            })
-          }
+            });
+          }}
           disabled={phase === "running"}
           title="The full ours-vs-theirs story: every wired system × all 5 classes (25 combos, auto-chunked, one merged result). JEV excluded — adapter not wired."
           className="studio-secondary-button px-5 py-2 disabled:opacity-50"
@@ -829,7 +848,7 @@ export default function BenchmarkPage() {
           </div>
           <div className="h-2 rounded bg-border-light">
             <div
-              className="h-2 rounded bg-gold transition-all"
+              className="bench-progress-fill h-2 rounded bg-gold transition-all"
               style={{ width: `${Math.min(100, Math.round((runProgress.done / Math.max(1, runProgress.total)) * 100))}%` }}
             />
           </div>
@@ -927,12 +946,19 @@ export default function BenchmarkPage() {
           <p className="meta">LEADERBOARD · REAL POINTS (100 × 0.7 SUCCESS + 0.3 VERIFY, PER CLASS MEAN)</p>
           <div className="grid gap-2">
             {leaderboard.map((s, rank) => (
-              <div key={s.system} className="rounded-lg border border-border bg-surface p-4">
+              <div
+                key={s.system}
+                className={cn(
+                  "rounded-lg border bg-surface p-4",
+                  rank === 0 ? "bench-champ" : "border-border",
+                )}
+              >
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="text-sm text-ivory">
                     <span className="meta mr-2 text-gold">#{rank + 1}</span>
                     {s.system}
                     <span className="meta ml-2">TRACK {TRACK_OF[s.system] ?? "A"}</span>
+                    {rank === 0 ? <span className="meta ml-2 text-gold">· CHAMPION</span> : null}
                   </span>
                   <span className="meta">
                     {s.points === null ? "— pts" : `${Math.round(s.points)} pts`}
