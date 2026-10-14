@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 const PUBLIC_PATHS = ["/login", "/signup", "/auth", "/api/health", "/api/debug", "/api/auth/session"];
 /* Benchmark leaderboard is public marketing: anyone can SEE the latest full
    run. Running one (POST) stays auth-gated + metered. */
-const PUBLIC_EXACT_PATHS = ["/", "/benchmark"];
+const PUBLIC_EXACT_PATHS = ["/", "/studio", "/benchmark"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
