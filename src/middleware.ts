@@ -1,15 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/login", "/signup", "/auth", "/api/health", "/api/debug", "/api/auth/session"];
-/* The homepage itself is public: visitors type their prompt first and hit a
-   sign-in popup only when they run it (ChatGPT-style flow). APIs stay locked. */
-const PUBLIC_EXACT_PATHS = ["/"];
+/* Benchmark leaderboard is public marketing: anyone can SEE the latest full
+   run. Running one (POST) stays auth-gated + metered. */
+const PUBLIC_EXACT_PATHS = ["/", "/benchmark"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isPublic =
     PUBLIC_EXACT_PATHS.includes(pathname) ||
-    PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+    PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ||
+    (pathname === "/api/benchmark" && request.method === "GET");
 
   const hasFirebaseConfig = Boolean(process.env.NEXT_PUBLIC_FIREBASE_API_KEY);
 

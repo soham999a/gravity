@@ -24,11 +24,15 @@ const VALID_SYSTEMS: BenchmarkSystem[] = [
   "OPENAI",
 ];
 
-/** Latest run (manifest + records + aggregates) for the /benchmark page. */
+/** Latest run (manifest + records + aggregates) for the /benchmark page.
+ *  Public: the leaderboard is marketing — anyone can read it. Running
+ *  (POST) stays auth-gated + quota-metered. */
 export async function GET(request: Request) {
-  const ctx = await verifyAuthToken(request as never);
-  if (!ctx) {
-    return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+  let ctx = null;
+  try {
+    ctx = await verifyAuthToken(request as never);
+  } catch {
+    ctx = null;
   }
   const { searchParams } = new URL(request.url);
   // Run history for A/B compare: ?runs=list → manifests (latest 20).
@@ -71,8 +75,30 @@ export async function GET(request: Request) {
   }
 
   const latest = await getLatestBenchmark();
+  // Free-lane meter: null = unlimited (BYOK key or wallet balance covers it).
+  // Logged-out readers get no meter (they can't run — POST stays gated).
+  let freeBench: { left: number | null; cap: number } | null = null;
+  if (ctx) {
+    try {
+      const { getDailyUsage, getWalletState, getUserProviderKey, FREE_DAILY } =
+        await import("@/lib/billing");
+      const [usage, wallet, byok] = await Promise.all([
+        getDailyUsage(ctx.uid),
+        getWalletState(ctx.uid),
+        getUserProviderKey(ctx.uid),
+      ]);
+      const cap = FREE_DAILY.bench_free;
+      freeBench =
+        byok || wallet.credits > 0
+          ? { left: null, cap }
+          : { left: Math.max(0, cap - (usage.bench_free ?? 0)), cap };
+    } catch {
+      /* meter optional — run still renders */
+    }
+  }
   return NextResponse.json({
     ...latest,
+    freeBench,
     taskSet: "workload-classes",
     reproducibility: REPRODUCIBILITY_NOTE,
     groundTruth: Object.entries(GROUND_TRUTH).map(([classId, truth]) => ({
@@ -88,6 +114,7 @@ export async function GET(request: Request) {
       maxTokens: PINNED_CONFIG.MAX_TOKENS,
     },
     jevWired: JEV_WIRED,
+    benchOpen: process.env.BENCH_OPEN === "1",
     openrouterConfigured: Boolean(process.env.OPENROUTER_API_KEY),
     deepseekConfigured: Boolean(process.env.DEEPSEEK_API_KEY),
   });
@@ -104,9 +131,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
   const { checkRateLimit, rateLimitKey } = await import("@/lib/rate-limit");
-  const rl = checkRateLimit(`benchmark:${rateLimitKey(request, ctx.uid)}`, 5, 60 * 60_000);
+  // Chunk calls: a full all-systems run is 15 small chunks (D/E ride solo),
+  // so the hourly ceiling must fit a full run + retries.
+  const rl = checkRateLimit(`benchmark:${rateLimitKey(request, ctx.uid)}`, 20, 60 * 60_000);
   if (!rl.allowed) {
-    return NextResponse.json({ error: "benchmark rate limited — 5/hour" }, { status: 429 });
+    return NextResponse.json({ error: "benchmark rate limited — 20 chunk calls/hour" }, { status: 429 });
   }
 
   const body = (await request.json().catch(() => ({}))) as {
@@ -161,11 +190,28 @@ export async function POST(request: Request) {
     }
   }
 
-  // Billing gate per chunk: BYOK → wallet → paid-only (no free benchmark).
+  // Billing split — the free lane covers GRAVITY systems only (they run on
+  // free-tier providers, $0 to us). Any pinned baseline in the chunk takes
+  // the paid path (BYOK → wallet, no free quota).
+  // Prototype override: BENCH_OPEN=1 puts ALL systems on the free lane so
+  // the ours-vs-theirs story runs for everyone (BYOK/wallet/Razorpay code
+  // stays untouched — flip the flag back and paid lanes return). Abuse armor
+  // (rate limit, chunk caps, daily free quota) stays enforced either way.
+  const BENCH_OPEN = process.env.BENCH_OPEN === "1";
+  const FREE_SYSTEMS = ["GRAVITY", "GRAVITY-STATIC"];
+  const hasPaid = !BENCH_OPEN && systems.some((s) => !FREE_SYSTEMS.includes(s));
+  const kind = hasPaid ? "bench_chunk" : "bench_free";
   const { authorize, settle, runWithKey } = await import("@/lib/billing");
-  const authz = await authorize(ctx.uid, "bench_chunk");
+  const authz = await authorize(ctx.uid, kind);
   if (!authz.ok) {
-    return NextResponse.json({ error: authz.reason }, { status: authz.code });
+    return NextResponse.json(
+      {
+        error: hasPaid
+          ? authz.reason
+          : "Free full benchmark used today — next run tomorrow. Add your OpenRouter key or top up credits for unlimited runs.",
+      },
+      { status: authz.code },
+    );
   }
   const byokKey = authz.mode === "byok" ? authz.key : undefined;
 
@@ -190,7 +236,7 @@ export async function POST(request: Request) {
         }),
       ).then(async (result) => {
         const persisted = await saveBenchmarkRun(result.manifest, result.records);
-        void settle(ctx.uid, "bench_chunk", authz.mode);
+        void settle(ctx.uid, kind, authz.mode);
         return { ...result, ...persisted, progress };
       });
       return NextResponse.json(payload);
@@ -232,7 +278,7 @@ export async function POST(request: Request) {
           }),
         );
         const persisted = await saveBenchmarkRun(result.manifest, result.records);
-        void settle(ctx.uid, "bench_chunk", authz.mode);
+        void settle(ctx.uid, kind, authz.mode);
         send({ type: "result", ...result, ...persisted, progress });
       } catch (err) {
         console.error("[benchmark] run failed:", err);

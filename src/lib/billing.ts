@@ -18,21 +18,26 @@ import { isFirebaseReady, adminDb } from "@/lib/firebase-admin";
 import { dbAllowed, fs } from "@/lib/db-guard";
 import { decryptKey } from "./keyvault";
 
-export type BillableKind = "chat" | "mission" | "bench_chunk" | "refine";
+export type BillableKind = "chat" | "mission" | "bench_chunk" | "bench_free" | "refine";
 
 /** Credits charged per successful execution. */
 export const CREDIT_COST: Record<BillableKind, number> = {
   chat: 1,
   mission: 5,
   bench_chunk: 5,
+  bench_free: 0,
   refine: 2,
 };
 
-/** Free daily trial on the shared key. Benchmarks stay paid-only. */
+/** Free daily trial on the shared key. Paid baselines stay paid-only;
+ *  the free lane covers GRAVITY-system chunks only (zero provider cost).
+ *  Cap fits one full all-systems run (25 combos ≈ 15 small chunks, D/E solo)
+ *  + spare for retries. */
 export const FREE_DAILY: Record<BillableKind, number> = {
   chat: 5,
   mission: 1,
   bench_chunk: 0,
+  bench_free: 20,
   refine: 3,
 };
 
@@ -125,7 +130,7 @@ export async function getWalletState(uid: string): Promise<WalletState> {
 }
 
 export async function getDailyUsage(uid: string): Promise<Record<BillableKind, number>> {
-  const zero: Record<BillableKind, number> = { chat: 0, mission: 0, bench_chunk: 0, refine: 0 };
+  const zero: Record<BillableKind, number> = { chat: 0, mission: 0, bench_chunk: 0, bench_free: 0, refine: 0 };
   const mem = memUsage.get(todayKey(uid));
   if (!useStore()) return mem ?? zero;
   try {
@@ -135,6 +140,7 @@ export async function getDailyUsage(uid: string): Promise<Record<BillableKind, n
       chat: Number(d.chat ?? 0) || 0,
       mission: Number(d.mission ?? 0) || 0,
       bench_chunk: Number(d.bench_chunk ?? 0) || 0,
+      bench_free: Number(d.bench_free ?? 0) || 0,
       refine: Number(d.refine ?? 0) || 0,
     };
   } catch {
@@ -221,7 +227,7 @@ export async function settle(uid: string, kind: BillableKind, mode: "byok" | "wa
       );
     }
     const key = todayKey(uid);
-    const cur = memUsage.get(key) ?? { chat: 0, mission: 0, bench_chunk: 0, refine: 0 };
+    const cur = memUsage.get(key) ?? { chat: 0, mission: 0, bench_chunk: 0, bench_free: 0, refine: 0 };
     cur[kind] += 1;
     memUsage.set(key, cur);
   } catch {

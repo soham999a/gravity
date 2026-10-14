@@ -5,15 +5,15 @@ import { cn } from "@/lib/utils";
 
 type SystemId = "GRAVITY" | "GRAVITY-STATIC" | "GRAVITY-OPENROUTER" | "JEV" | "CLAUDE" | "OPENAI";
 
-const SYSTEMS: { id: SystemId; label: string; note: string; disabled?: boolean; hidden?: boolean }[] = [
-  { id: "GRAVITY", label: "GRAVITY", note: "adaptive kernel · full pipeline" },
-  { id: "GRAVITY-STATIC", label: "GRAVITY-Static", note: "kernel pinned OFF · isolates the architecture" },
-  { id: "GRAVITY-OPENROUTER", label: "GRAVITY-OpenRouter", note: "raw pinned OpenRouter model (paid $5 workhorse) · no kernel" },
+const SYSTEMS: { id: SystemId; label: string; note: string; disabled?: boolean; hidden?: boolean; paid?: boolean }[] = [
+  { id: "GRAVITY", label: "GRAVITY", note: "adaptive kernel · full pipeline · FREE lane" },
+  { id: "GRAVITY-STATIC", label: "GRAVITY-Static", note: "kernel pinned OFF · isolates the architecture · FREE lane" },
+  { id: "GRAVITY-OPENROUTER", label: "GRAVITY-OpenRouter", note: "raw pinned OpenRouter model · paid lane (credits/BYOK) · no kernel", paid: true },
   // Jev picker hidden until its REST API is wired — a permanent empty column
   // reads as broken. Historic UNSUPPORTED rows still render wherever stored.
   { id: "JEV", label: "Jev — NOT WIRED", note: "decision model · selecting it only records an honest UNSUPPORTED row", disabled: true, hidden: true },
-  { id: "CLAUDE", label: "Claude", note: "claude-sonnet-5.5 · provider-pinned, raw" },
-  { id: "OPENAI", label: "OpenAI", note: "gpt-oss-120b · provider-pinned, raw (needs credit)" },
+  { id: "CLAUDE", label: "Claude", note: "claude-sonnet-5.5 · provider-pinned, raw · paid lane", paid: true },
+  { id: "OPENAI", label: "OpenAI", note: "gpt-oss-120b · provider-pinned, raw · paid lane", paid: true },
 ];
 
 const CLASSES = ["A", "B", "C", "D", "E"] as const;
@@ -164,6 +164,10 @@ export default function BenchmarkPage() {
   const [compareId, setCompareId] = React.useState<string | null>(null);
   const [compareAggs, setCompareAggs] = React.useState<Aggregate[]>([]);
   const [compareMeta, setCompareMeta] = React.useState<Manifest | null>(null);
+  // Free-lane meter: null left = unlimited (BYOK/wallet). Refreshed on load + after runs.
+  const [freeBench, setFreeBench] = React.useState<{ left: number | null; cap: number } | null>(null);
+  // Prototype override from server: all systems ride the free lane.
+  const [benchOpen, setBenchOpen] = React.useState(false);
 
   const load = React.useCallback(async () => {
     try {
@@ -180,6 +184,10 @@ export default function BenchmarkPage() {
       setDeepseekConfigured(Boolean(data.deepseekConfigured));
       setPinnedConfig(data.pinnedConfig ?? null);
       setJevWired(Boolean(data.jevWired));
+      setFreeBench(
+        data.freeBench && typeof data.freeBench.cap === "number" ? data.freeBench : null,
+      );
+      setBenchOpen(Boolean(data.benchOpen));
     } catch {
       /* first-load race; the run will refresh */
     }
@@ -223,21 +231,35 @@ export default function BenchmarkPage() {
   const selectAllRunnable = () =>
     setSelected(new Set(SYSTEMS.filter((s) => !s.disabled && !s.hidden).map((s) => s.id)));
 
-  /** Split a run into Vercel-safe chunks (≤6 combos each): per system, slice
-   *  its runs so every chunk stays under the server's per-request ceiling. */
+  /** Split a run into Vercel-safe chunks: fast classes batch together
+   *  (≤6 combos/request) while slow D/E classes ride solo — one D/E task can
+   *  burn ~50s alone, so sharing a chunk risks the 120s serverless ceiling.
+   *  Every chunk stays well under it; the bar still shows one merged run. */
+  const SLOW_CLASSES: ReadonlySet<string> = new Set(["D", "E"]);
   const planChunks = (
     systems: string[],
     classes: string[],
     runs: number,
   ): { systems: string[]; classes: string[]; runsPerClass: number }[] => {
     const chunks: { systems: string[]; classes: string[]; runsPerClass: number }[] = [];
-    const perRun = Math.max(1, classes.length);
+    const fast = classes.filter((c) => !SLOW_CLASSES.has(c));
+    const slow = classes.filter((c) => SLOW_CLASSES.has(c));
     for (const system of systems) {
-      let left = runs;
-      while (left > 0) {
-        const k = Math.max(1, Math.min(left, Math.floor(CHUNK_MAX / perRun)));
-        chunks.push({ systems: [system], classes, runsPerClass: k });
-        left -= k;
+      for (let i = 0; i < fast.length; i += CHUNK_MAX) {
+        const slice = fast.slice(i, i + CHUNK_MAX);
+        let left = runs;
+        while (left > 0) {
+          const k = Math.max(1, Math.min(left, Math.floor(CHUNK_MAX / slice.length)));
+          chunks.push({ systems: [system], classes: slice, runsPerClass: k });
+          left -= k;
+        }
+      }
+      for (const c of slow) {
+        let left = runs;
+        while (left > 0) {
+          chunks.push({ systems: [system], classes: [c], runsPerClass: 1 });
+          left -= 1;
+        }
       }
     }
     return chunks;
@@ -384,8 +406,14 @@ export default function BenchmarkPage() {
       }
     } catch (err) {
       if (err instanceof Error && err.message === "UNAUTHORIZED") {
+        const loggedOut =
+          typeof document !== "undefined" && !document.cookie.includes("fb-token=");
         setPhase("error");
-        setError("Session expired — sign out and sign in again, then press RETRY RUN below. Your plan is kept.");
+        setError(
+          loggedOut
+            ? "Sign in to run benchmarks — the leaderboard above is free for everyone to see."
+            : "Session expired — sign out and sign in again, then press RETRY RUN below. Your plan is kept.",
+        );
         return;
       }
       // Refresh anyway: completed chunks persisted under one runId.
@@ -412,8 +440,9 @@ export default function BenchmarkPage() {
       clearInterval(tickId);
       stopRef.current = null;
       setRunProgress(null);
+      load();
     }
-  }, [selected, selectedClasses, runsPerClass, seed, phase, runChunk]);
+  }, [selected, selectedClasses, runsPerClass, seed, phase, runChunk, load]);
 
   const systemOrder = SYSTEMS.map((s) => s.id);
   const classOrder = ["A", "B", "C", "D", "E"];
@@ -605,12 +634,19 @@ export default function BenchmarkPage() {
                 <span className={cn("text-sm font-medium", active && !disabled ? "text-gold" : "text-ivory")}>
                   {system.label}
                 </span>
-                <span
-                  className={cn(
-                    "size-2 rounded-full",
-                    active && !disabled ? "bg-gold" : "bg-border-subtle",
+                <span className="flex items-center gap-2">
+                  {system.paid && !benchOpen ? (
+                    <span className="meta rounded border border-border px-1.5 py-0.5 text-gold">PAID</span>
+                  ) : (
+                    <span className="meta rounded border border-border px-1.5 py-0.5">FREE</span>
                   )}
-                />
+                  <span
+                    className={cn(
+                      "size-2 rounded-full",
+                      active && !disabled ? "bg-gold" : "bg-border-subtle",
+                    )}
+                  />
+                </span>
               </div>
               <p className="meta mt-1.5">{system.note}</p>
             </button>
@@ -646,6 +682,46 @@ export default function BenchmarkPage() {
 
       {/* ── Run controls (sticky: always in reach on long result pages) ── */}
       <section className="bench-sticky flex flex-wrap items-center gap-4">
+        <button
+          type="button"
+          onClick={() =>
+            runBenchmark({
+              systems: ["GRAVITY", "GRAVITY-STATIC"],
+              classes: ["A", "B", "C", "D", "E"],
+              runsPerClass: 1,
+              seed: 42,
+            })
+          }
+          disabled={phase === "running"}
+          title="One click: all 5 classes on the free lane (10 combos, auto-chunked, one merged result). JEV excluded — adapter not wired."
+          className="studio-primary-button border-gold bg-gold px-5 py-2 font-semibold disabled:opacity-50"
+        >
+          {phase === "running" ? "RUNNING…" : "FULL BENCHMARK · ALL CLASSES (FREE)"}
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            runBenchmark({
+              systems: SYSTEMS.filter((s) => !s.disabled && !s.hidden).map((s) => s.id),
+              classes: ["A", "B", "C", "D", "E"],
+              runsPerClass: 1,
+              seed: 42,
+            })
+          }
+          disabled={phase === "running"}
+          title="The full ours-vs-theirs story: every wired system × all 5 classes (25 combos, auto-chunked, one merged result). JEV excluded — adapter not wired."
+          className="studio-secondary-button px-5 py-2 disabled:opacity-50"
+        >
+          {phase === "running" ? "RUNNING…" : "FULL · ALL SYSTEMS (OURS VS THEIRS)"}
+        </button>
+        <span className="meta">
+          JEV excluded — not wired ·{" "}
+          {freeBench
+            ? freeBench.left === null
+              ? "unlimited (wallet/BYOK)"
+              : `${freeBench.left}/${freeBench.cap} free chunks today`
+            : "sign in to run · leaderboard free for all"}
+        </span>
         <button
           type="button"
           onClick={() => runBenchmark()}
