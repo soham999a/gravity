@@ -54,23 +54,23 @@ export default function LandingPage() {
     else setAuthOpen(true);
   };
   return (
-    <div className="ds">
-      {/* Floating sphere as the WHOLE page background — fixed, full-bleed. */}
-      <div className="ds-bg" aria-hidden="true">
-        <video
-          ref={sphereRef}
-          className="ds-bg-video"
-          src="/gemini_generated_video_f480223b.mp4"
-          autoPlay
-          loop
-          muted
-          playsInline
-          preload="auto"
-          disablePictureInPicture
-        />
-        <div className="ds-bg-shade" />
-      </div>
+    <>
       <section className="ds-hero">
+        {/* Light sphere film — full-bleed hero. Dark below, as it was. */}
+        <div className="ds-bg" aria-hidden="true">
+          <video
+            ref={sphereRef}
+            className="ds-bg-video"
+            src="/gemini_generated_video_81fbeddf.mp4"
+            autoPlay
+            loop
+            muted
+            playsInline
+            preload="auto"
+            disablePictureInPicture
+          />
+          <div className="ds-bg-shade" />
+        </div>
         <h1 className="ds-h1">
           Explore unreached <em>intelligence.</em>
         </h1>
@@ -84,7 +84,10 @@ export default function LandingPage() {
           </button>
         </div>
       </section>
+      {/* Black strip + golden fabric thread — light above, dark below. */}
+      <div className="ds-strip" aria-hidden="true" />
 
+      <div className="ds">
       <section className="ds-pillars">
         {PILLARS.map((p) => (
           <div key={p.kicker} className="ds-pillar">
@@ -132,6 +135,7 @@ export default function LandingPage() {
         }}
         reason="Sign in to enter the studio — your workspace waits on the other side."
       />
-    </div>
+      </div>
+    </>
   );
 }
