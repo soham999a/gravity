@@ -6354,5 +6354,77 @@
 }
 .ds-foot-status { display: inline-flex; align-items: center; gap: 8px; }
 
+/* Original studio home — ambient light wash (senior: reduce the dark).
+   Layout, swarm, surfaces untouched: three faint fixed glows that sit
+   above the void and below everything, content breathes over them. */
+.studio-original {
+  position: relative;
+}
+/* Studio backdrop: optional video (dimmed for readability) + living
+   aurora underneath. Fixed, behind everything, pointer-transparent.
+   Swarm untouched — this paints below it. */
+.studio-backdrop-video {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  object-fit: cover;
+  z-index: -2;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+  filter: brightness(0.42) saturate(0.85);
+}
+.studio-backdrop-video-on {
+  opacity: 1;
+}
+@media (max-width: 640px) {
+  .studio-backdrop-video {
+    display: none;
+  }
+}
+.studio-aurora {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  overflow: hidden;
+}
+.studio-aurora span {
+  position: absolute;
+  width: 60vmax;
+  height: 60vmax;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.55;
+  will-change: transform;
+}
+.studio-aurora-a {
+  top: -22vmax;
+  left: 50%;
+  margin-left: -30vmax;
+  background: radial-gradient(circle, rgba(184, 150, 12, 0.16), transparent 65%);
+  animation: aurora-drift-a 26s ease-in-out infinite alternate;
+}
+.studio-aurora-b {
+  bottom: -26vmax;
+  left: -12vmax;
+  background: radial-gradient(circle, rgba(240, 237, 230, 0.07), transparent 65%);
+  animation: aurora-drift-b 32s ease-in-out infinite alternate;
+}
+@keyframes aurora-drift-a {
+  from { transform: translate3d(-6vmax, 0, 0) scale(1); }
+  to { transform: translate3d(6vmax, 3vmax, 0) scale(1.12); }
+}
+@keyframes aurora-drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1.05); }
+  to { transform: translate3d(8vmax, -4vmax, 0) scale(0.95); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .studio-aurora span {
+    animation: none;
+  }
+}
+
 
 

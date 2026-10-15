@@ -29,6 +29,7 @@ import { ChatThread } from "@/components/studio/ChatThread";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { MissionRun } from "@/components/studio/MissionRun";
 import { RightSideVisualField } from "@/components/gravity/RightSideVisualField";
+import { StudioBackdrop } from "@/components/gravity/StudioBackdrop";
 import { useGravityUser } from "@/lib/gravity-user";
 import { useMissionFeed } from "@/lib/gravity-missions";
 import { displayPrompt } from "@/lib/gravity/promptText";
@@ -388,7 +389,8 @@ function HomeContent() {
   const usagePct = stats ? Math.min(100, (stats.tokensMonth / FREE_LIMIT) * 100) : 0;
 
   return (
-    <div className="studio-page studio-home">
+    <div className="studio-page studio-home studio-original">
+      <StudioBackdrop />
       <section className="studio-hero">
         <div className="studio-hero-grid">
           <div className="studio-hero-rail">
