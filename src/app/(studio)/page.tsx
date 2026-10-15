@@ -60,7 +60,7 @@ export default function LandingPage() {
         <video
           ref={sphereRef}
           className="ds-bg-video"
-          src="/floating_sphere_20s.mp4"
+          src="/gemini_generated_video_f480223b.mp4"
           autoPlay
           loop
           muted
