@@ -2612,9 +2612,39 @@
   background: var(--color-border);
 }
 .auth-modal-google {
+  width: 100%;
+  justify-content: center;
+  text-align: center;
   background: transparent;
   color: var(--color-ivory);
   border-color: var(--color-border);
+  gap: 10px;
+  margin-top: 20px;
+}
+.auth-modal-google:hover:not(:disabled) {
+  background: transparent;
+  border-color: var(--color-gold);
+  color: var(--color-gold);
+}
+.auth-modal-google svg {
+  flex-shrink: 0;
+}
+.auth-modal-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  color: var(--color-ivory);
+  margin-bottom: 14px;
+}
+.auth-modal-brand-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-gold);
+  box-shadow: 0 0 12px rgba(184, 150, 12, 0.6);
 }
 .auth-modal-google:hover:not(:disabled) {
   background: transparent;
@@ -6161,6 +6191,18 @@
   max-width: 1120px;
   margin: 0 auto;
   padding: 0 clamp(20px, 4vw, 48px) 40px;
+  position: relative;
+}
+/* Ambient light — lifts the black without touching layout, type or color. */
+.ds::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 70% 42% at 50% -6%, rgba(184, 150, 12, 0.09), transparent 70%),
+    radial-gradient(ellipse 55% 30% at 50% 108%, rgba(240, 237, 230, 0.035), transparent 70%);
 }
 .ds-hero {
   display: flex;
@@ -6204,7 +6246,7 @@
   line-height: 1.02;
   color: var(--color-ivory);
   font-size: clamp(48px, 8vw, 104px);
-  margin-top: 30px;
+  margin-top: 0;
   text-wrap: balance;
 }
 .ds-h1 em { color: var(--color-gold); font-style: italic; }
@@ -6241,6 +6283,11 @@
   transition: 0.2s ease;
 }
 .ds-cta-primary:hover { background: var(--color-ivory); border-color: var(--color-ivory); }
+.ds-cta-primary {
+  box-shadow:
+    0 0 0 1px rgba(184, 150, 12, 0.25),
+    0 8px 32px rgba(184, 150, 12, 0.18);
+}
 .ds-pillars {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -6253,6 +6300,7 @@
 }
 @media (max-width: 820px) { .ds-pillars { grid-template-columns: minmax(0, 1fr); } }
 .ds-pillar { background: var(--color-deep); padding: 30px 28px; }
+.ds-pillar { box-shadow: inset 0 1px 0 rgba(240, 237, 230, 0.05); }
 .ds-pillar-kicker {
   font-family: var(--font-mono);
   font-size: 9px;

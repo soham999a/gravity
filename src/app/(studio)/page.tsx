@@ -1,7 +1,13 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, ArrowUpRight } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowUpRight } from "lucide-react";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "@/lib/firebase";
+import { AuthModal } from "@/components/auth/AuthModal";
+import { GravityWell } from "@/components/gravity/GravityWell";
 
 const PILLARS = [
   {
@@ -17,21 +23,34 @@ const PILLARS = [
   {
     kicker: "EVIDENCE",
     title: "Measured, never vibes",
-    body: "Five workload classes through competing systems. Same task, same input, same criterion — public leaderboard.",
+    body: "Four workload classes through competing systems. Same task, same input, same criterion — public leaderboard.",
   },
 ];
 
 /** 1st landing — front door. One action: Explore Gravity → the original
- *  studio homepage at /studio (2nd landing), where all work happens. */
+ *  studio homepage at /studio (2nd landing), where all work happens.
+ *  Logged-out visitors meet sign-in first, then land straight in /studio. */
 export default function LandingPage() {
+  const router = useRouter();
+  const [isAuthed, setIsAuthed] = React.useState(
+    () => typeof document !== "undefined" && document.cookie.includes("fb-token="),
+  );
+  const [authOpen, setAuthOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => setIsAuthed(Boolean(user)));
+    return () => unsub();
+  }, []);
+
+  const explore = () => {
+    if (isAuthed) router.push("/studio");
+    else setAuthOpen(true);
+  };
   return (
     <div className="ds">
+      {/* Spacetime bent around a decision — landing only. */}
+      <GravityWell />
       <section className="ds-hero">
-        <Link href="/benchmark" className="ds-pill">
-          <span className="ds-pill-dot" />
-          <span>GRAVITY Core live — adaptive routing across L0–L5</span>
-          <ArrowRight className="size-3.5" />
-        </Link>
         <h1 className="ds-h1">
           Explore unreached <em>intelligence.</em>
         </h1>
@@ -40,9 +59,9 @@ export default function LandingPage() {
           then proves it with a receipt.
         </p>
         <div className="ds-ctas">
-          <Link href="/studio" className="ds-cta-primary">
+          <button type="button" onClick={explore} className="ds-cta-primary">
             Explore Gravity <ArrowUpRight className="size-4" />
-          </Link>
+          </button>
         </div>
       </section>
 
@@ -83,6 +102,16 @@ export default function LandingPage() {
           </span>
         </div>
       </footer>
+
+      <AuthModal
+        open={authOpen}
+        onClose={() => setAuthOpen(false)}
+        onSuccess={() => {
+          setAuthOpen(false);
+          router.push("/studio");
+        }}
+        reason="Sign in to enter the studio — your workspace waits on the other side."
+      />
     </div>
   );
 }
