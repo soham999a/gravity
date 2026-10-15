@@ -8,7 +8,8 @@ type SystemId = "GRAVITY" | "GRAVITY-STATIC" | "GRAVITY-OPENROUTER" | "JEV" | "C
 const SYSTEMS: { id: SystemId; label: string; note: string; disabled?: boolean; hidden?: boolean; paid?: boolean }[] = [
   { id: "GRAVITY", label: "GRAVITY", note: "adaptive kernel · full pipeline · FREE lane" },
   { id: "GRAVITY-STATIC", label: "GRAVITY-Static", note: "kernel pinned OFF · isolates the architecture · FREE lane" },
-  { id: "GRAVITY-OPENROUTER", label: "GRAVITY-OpenRouter", note: "raw pinned OpenRouter model · paid lane (credits/BYOK) · no kernel", paid: true },
+  // GRAVITY-OPENROUTER commented out for now — raw pinned model, back when needed.
+  // { id: "GRAVITY-OPENROUTER", label: "GRAVITY-OpenRouter", note: "raw pinned OpenRouter model · paid lane (credits/BYOK) · no kernel", paid: true },
   // Jev picker hidden until its REST API is wired — a permanent empty column
   // reads as broken. Historic UNSUPPORTED rows still render wherever stored.
   { id: "JEV", label: "Jev — NOT WIRED", note: "decision model · selecting it only records an honest UNSUPPORTED row", disabled: true, hidden: true },
@@ -16,7 +17,7 @@ const SYSTEMS: { id: SystemId; label: string; note: string; disabled?: boolean; 
   { id: "OPENAI", label: "OpenAI", note: "gpt-oss-120b · provider-pinned, raw · paid lane", paid: true },
 ];
 
-const CLASSES = ["A", "B", "C", "D", "E"] as const;
+const CLASSES = ["A", "B", "C", "D"] as const;
 type ClassId = (typeof CLASSES)[number];
 
 /** Spec §workloads: the architectural claim each class probes. */
@@ -25,7 +26,6 @@ const CLASS_CLAIMS: Record<ClassId, string> = {
   B: "Stats-first routing — spike + trend computed, not hallucinated.",
   C: "Escalation ladder fires — cheap start, model only when required.",
   D: "Orchestration + parallelism — 3 workstreams, then synthesis.",
-  E: "Adaptation under failure — the differentiating class. Adapt or die.",
 };
 
 /** Spec §tracks: B isolates architecture (model fixed), A compares systems. */
@@ -139,7 +139,7 @@ export default function BenchmarkPage() {
     () => new Set<SystemId>(["GRAVITY", "GRAVITY-STATIC"]),
   );
   const [selectedClasses, setSelectedClasses] = React.useState<Set<ClassId>>(
-    () => new Set<ClassId>(["A", "B", "C", "D", "E"]),
+    () => new Set<ClassId>(["A", "B", "C", "D"]),
   );
   const [runsPerClass, setRunsPerClass] = React.useState(1);
   const [seed, setSeed] = React.useState(42);
@@ -235,7 +235,7 @@ export default function BenchmarkPage() {
    *  (≤6 combos/request) while slow D/E classes ride solo — one D/E task can
    *  burn ~50s alone, so sharing a chunk risks the 120s serverless ceiling.
    *  Every chunk stays well under it; the bar still shows one merged run. */
-  const SLOW_CLASSES: ReadonlySet<string> = new Set(["D", "E"]);
+  const SLOW_CLASSES: ReadonlySet<string> = new Set(["D"]);
   const planChunks = (
     systems: string[],
     classes: string[],
@@ -465,7 +465,7 @@ export default function BenchmarkPage() {
   }, [selected, selectedClasses, runsPerClass, seed, phase, runChunk, load]);
 
   const systemOrder = SYSTEMS.map((s) => s.id);
-  const classOrder = ["A", "B", "C", "D", "E"];
+  const classOrder = ["A", "B", "C", "D"];
   const aggregateFor = (system: string, workloadClass: string) =>
     aggregates.find((a) => a.system === system && a.workloadClass === workloadClass) ?? null;
   // First measured record per cell — feeds the model + config-hash tooltip
@@ -613,7 +613,7 @@ export default function BenchmarkPage() {
           </div>
         </div>
         <p className="max-w-3xl text-sm leading-relaxed text-ivory-faint">
-          The backend instruments itself: the same five workload tasks run through
+          The backend instruments itself: the same four workload tasks run through
           competing systems and every run emits a BenchmarkRecord — the common
           measurement language. GRAVITY-Static pins the kernel OFF, so the delta
           between the two GRAVITY rows IS the architecture&apos;s contribution.
@@ -716,18 +716,18 @@ export default function BenchmarkPage() {
             // FULL means full: sync the pickers first so the screen always
             // shows exactly what is running (no split-brain selection).
             setSelected(new Set<SystemId>(["GRAVITY", "GRAVITY-STATIC"]));
-            setSelectedClasses(new Set<ClassId>(["A", "B", "C", "D", "E"]));
+            setSelectedClasses(new Set<ClassId>(["A", "B", "C", "D"]));
             setRunsPerClass(1);
             setSeed(42);
             runBenchmark({
               systems: ["GRAVITY", "GRAVITY-STATIC"],
-              classes: ["A", "B", "C", "D", "E"],
+              classes: ["A", "B", "C", "D"],
               runsPerClass: 1,
               seed: 42,
             });
           }}
           disabled={phase === "running"}
-          title="One click: all 5 classes on the free lane (10 combos, auto-chunked, one merged result). JEV excluded — adapter not wired."
+          title="One click: all 4 classes on the free lane (8 combos, auto-chunked, one merged result). JEV excluded — adapter not wired."
           className="studio-primary-button border-gold bg-gold px-5 py-2 font-semibold disabled:opacity-50"
         >
           {phase === "running" ? "RUNNING…" : "FULL BENCHMARK · ALL CLASSES (FREE)"}
@@ -737,18 +737,18 @@ export default function BenchmarkPage() {
           onClick={() => {
             const all = SYSTEMS.filter((s) => !s.disabled && !s.hidden).map((s) => s.id);
             setSelected(new Set(all));
-            setSelectedClasses(new Set<ClassId>(["A", "B", "C", "D", "E"]));
+            setSelectedClasses(new Set<ClassId>(["A", "B", "C", "D"]));
             setRunsPerClass(1);
             setSeed(42);
             runBenchmark({
               systems: all,
-              classes: ["A", "B", "C", "D", "E"],
+              classes: ["A", "B", "C", "D"],
               runsPerClass: 1,
               seed: 42,
             });
           }}
           disabled={phase === "running"}
-          title="The full ours-vs-theirs story: every wired system × all 5 classes (25 combos, auto-chunked, one merged result). JEV excluded — adapter not wired."
+          title="The full ours-vs-theirs story: every wired system × all 4 classes (16 combos, auto-chunked, one merged result). JEV excluded — adapter not wired."
           className="studio-secondary-button px-5 py-2 disabled:opacity-50"
         >
           {phase === "running" ? "RUNNING…" : "FULL · ALL SYSTEMS (OURS VS THEIRS)"}
@@ -1194,7 +1194,7 @@ export default function BenchmarkPage() {
           <p className="meta mt-2">Every cell below fills only from real runs — never placeholders.</p>
           <div className="mt-4 flex flex-wrap justify-center gap-2">
             <span className="bench-empty-chip">1 · 1 system × 1 class ≈ 1 min</span>
-            <span className="bench-empty-chip">2 · GRAVITY + STATIC × A–E ≈ 10 min</span>
+            <span className="bench-empty-chip">2 · GRAVITY + STATIC × A–D ≈ 8 min</span>
             <span className="bench-empty-chip">3 · Export the slide PDF</span>
           </div>
         </section>

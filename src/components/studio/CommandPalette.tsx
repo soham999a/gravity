@@ -115,7 +115,7 @@ export function CommandPalette() {
       },
       {
         id: "classes",
-        label: "Five Workload Classes",
+        label: "Four Workload Classes",
         hint: "Benchmark battery",
         icon: <Layers className="size-3.5" />,
         run: () => router.push("/classes"),

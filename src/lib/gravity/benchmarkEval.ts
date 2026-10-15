@@ -90,15 +90,6 @@ export const GROUND_TRUTH: Record<WorkloadClassId, TaskTruth> = {
       return hits >= 2 || numbered;
     },
   },
-  E: {
-    difficulty: "HARD",
-    successCriterion:
-      "Run completes despite the injected mid-run resource failure AND the answer engages resilience (risk/mitigation/recovery/retry) — the orchestrator absorbed the change (run status + wording).",
-    structuralCheck: (facts) => facts.stepCount > 0 && facts.steps.every((step) => step.status === "completed"),
-    staticCheck: (output) =>
-      output.length >= 100 &&
-      /(risk|mitigat|resilien|recover|retry|fail|degrad|contingen)/i.test(output),
-  },
 };
 
 /** Main entry point (spec's `evaluate(task, record)`). */

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-type ClassId = "A" | "B" | "C" | "D" | "E";
+type ClassId = "A" | "B" | "C" | "D";
 
 interface ClassDef {
   id: ClassId;
@@ -51,7 +51,6 @@ const CLASS_TONE: Record<ClassId, string> = {
   B: "text-success-text",
   C: "text-ivory",
   D: "text-chart-4",
-  E: "text-danger-text",
 };
 
 export default function ClassesPage() {
@@ -109,7 +108,7 @@ export default function ClassesPage() {
       <header className="space-y-3">
         <p className="meta">05 / Benchmarks</p>
         <h1 className="font-sans text-2xl font-light tracking-wide text-ivory">
-          THE FIVE WORKLOAD CLASSES
+          THE FOUR WORKLOAD CLASSES
         </h1>
         <p className="max-w-3xl text-sm leading-relaxed text-ivory-faint">
           One test per class, each proving a different architectural claim. A test passes when the
@@ -123,7 +122,7 @@ export default function ClassesPage() {
             onClick={runAllClasses}
             disabled={runAll || defs.length === 0}
           >
-            {runAll ? "Running battery…" : "Run all five"}
+            {runAll ? "Running battery…" : "Run all four"}
           </button>
           <span className="meta">
             {passed}/{done || 0} passed · runs the live Gemini-powered pipeline
@@ -135,9 +134,9 @@ export default function ClassesPage() {
       <section className="border border-border bg-surface/40 p-5">
         <div className="mb-4 flex items-center justify-between">
           <p className="meta">Scoreboard</p>
-          <p className="meta">{done}/5 executed</p>
+          <p className="meta">{done}/4 executed</p>
         </div>
-        <div className="grid grid-cols-5 gap-3">
+        <div className="grid grid-cols-4 gap-3 max-sm:grid-cols-2">
           {defs.map((def) => {
             const state = runs[def.id];
             const receipt = state?.receipt;
@@ -174,7 +173,7 @@ export default function ClassesPage() {
         </div>
         {done === 5 ? (
           <p className="meta mt-4 text-center">
-            {passed}/5 classes passed — routing, allocation, and orchestration proven live.
+            {passed}/4 classes passed — routing, allocation, and orchestration proven live.
           </p>
         ) : null}
       </section>

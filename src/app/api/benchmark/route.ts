@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 const VALID_SYSTEMS: BenchmarkSystem[] = [
   "GRAVITY",
   "GRAVITY-STATIC",
-  "GRAVITY-OPENROUTER",
+  // "GRAVITY-OPENROUTER", // commented out for now — back when needed
   "JEV",
   "CLAUDE",
   "OPENAI",
@@ -131,7 +131,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
   const { checkRateLimit, rateLimitKey } = await import("@/lib/rate-limit");
-  // Chunk calls: a full all-systems run is 15 small chunks (D/E ride solo),
+  // Chunk calls: a full all-systems run is 8 small chunks (D rides solo),
   // so the hourly ceiling must fit a full run + retries.
   const rl = checkRateLimit(`benchmark:${rateLimitKey(request, ctx.uid)}`, 20, 60 * 60_000);
   if (!rl.allowed) {
@@ -160,14 +160,14 @@ export async function POST(request: Request) {
   // JEV stays selectable: the adapter records the honest UNSUPPORTED error
   // (spec: a missing row is worse than a failed row) instead of 400-ing.
 
-  const classes = (body.classes ?? ["A", "B", "C", "D", "E"]).filter((entry) =>
-    ["A", "B", "C", "D", "E"].includes(entry),
-  ) as ("A" | "B" | "C" | "D" | "E")[];
+  const classes = (body.classes ?? ["A", "B", "C", "D"]).filter((entry) =>
+    ["A", "B", "C", "D"].includes(entry),
+  ) as ("A" | "B" | "C" | "D")[];
   const runsPerClass = Math.min(Math.max(body.runsPerClass ?? 1, 1), 10);
   const seed = typeof body.seed === "number" ? body.seed : 42;
   const appendRunId = typeof body.runId === "string" && body.runId.length > 0 ? body.runId : undefined;
 
-  // Chunk guard: one request stays Vercel-safe (≤8 combos ≈ under 120s).
+  // Chunk guard: one request stays Vercel-safe (≤6 combos with D solo).
   // The client chains chunks with a shared runId; the run total caps at 60.
   const combos = systems.length * classes.length * runsPerClass;
   if (combos > 8) {
@@ -177,7 +177,7 @@ export async function POST(request: Request) {
     );
   }
   if (classes.length === 0) {
-    return NextResponse.json({ error: "pick at least one class: A, B, C, D, E" }, { status: 400 });
+    return NextResponse.json({ error: "pick at least one class: A, B, C, D" }, { status: 400 });
   }
   if (appendRunId) {
     const existing = await getBenchmarkRun(appendRunId);

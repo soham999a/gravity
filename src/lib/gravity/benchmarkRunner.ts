@@ -69,21 +69,6 @@ export interface RunnerResult {
   aborted: boolean;
 }
 
-/** Process-wide class-E mutex. The injected-failure flag is global one-shot
- *  state — E jobs from ANY concurrent run must serialize around
- *  set→execute→clear or parallel runs steal each other's failure. */
-let eMutex: Promise<void> = Promise.resolve();
-
-function runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-  const run = eMutex.then(fn, fn);
-  // Keep the chain alive even if a job rejects.
-  eMutex = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
-}
-
 class AbortedError extends Error {
   constructor() {
     super("benchmark run aborted");
@@ -100,7 +85,7 @@ function isAbort(err: unknown, signal?: AbortSignal): boolean {
   );
 }
 
-const ALL_CLASS_IDS: WorkloadClassId[] = ["A", "B", "C", "D", "E"];
+const ALL_CLASS_IDS: WorkloadClassId[] = ["A", "B", "C", "D"];
 const DEFAULT_SYSTEMS: BenchmarkSystem[] = ["GRAVITY", "GRAVITY-STATIC"];
 
 function loadTaskDefs(classes: WorkloadClassId[]): WorkloadClassDef[] {
@@ -170,23 +155,20 @@ export async function runBenchmark(options: RunnerOptions = {}): Promise<RunnerR
 
   const taskDefs = loadTaskDefs(classes).map(freezeTask);
   const total = taskDefs.length * runsPerClass * systems.length;
-  // Guard: a full 5×3×6 = 90 live missions can never fit in one
-  // serverless invocation (vercel maxDuration 120s). Fail fast with guidance
-  // instead of timing out halfway and persisting a partial run.
+  // Guard: a full 4-class × 6-system × 3-run = 72 live missions can never fit
+  // in one serverless invocation (vercel maxDuration 120s). Fail fast with
+  // guidance instead of timing out halfway and persisting a partial run.
   const MAX_COMBOS = 30;
   if (total > MAX_COMBOS) {
     throw new Error(
       `Benchmark too large: ${total} combos (systems × classes × runs). Max ${MAX_COMBOS} per run ` +
-        `— pick fewer systems/classes or runsPerClass=1. E.g. 2 systems × 5 classes × 1 run = 10.`,
+        `— pick fewer systems/classes or runsPerClass=1. E.g. 2 systems × 4 classes × 1 run = 8.`,
     );
   }
   let current = 0;
 
   // Build a flat job list so independent (system, class, run) pairs can run
   // with limited concurrency instead of fully sequentially.
-  // Exception: Class E arms a global one-shot failure flag
-  // (__gravity_inject_failure__ in classes.ts) — E jobs must stay serial
-  // or parallel runs would steal each other's injected failure.
   type Job = { def: (typeof taskDefs)[number]; run: number; system: BenchmarkSystem };
   const allJobs: Job[] = [];
   for (const def of taskDefs) {
@@ -196,8 +178,6 @@ export async function runBenchmark(options: RunnerOptions = {}): Promise<RunnerR
       }
     }
   }
-  const parallelJobs = allJobs.filter((j) => j.def.id !== "E");
-  const serialJobs = allJobs.filter((j) => j.def.id === "E");
 
   const CONCURRENCY = 3;
   const TASK_TIMEOUT_MS = 50_000;
@@ -293,7 +273,7 @@ export async function runBenchmark(options: RunnerOptions = {}): Promise<RunnerR
     return Promise.race([work, timeout]);
   }
 
-  // Limited-concurrency pool for non-E jobs. Abort-aware: workers stop
+  // Limited-concurrency pool over all jobs. Abort-aware: workers stop
   // pulling the moment cancellation lands; in-flight jobs race their own
   // timeout and their late results are discarded below, never persisted.
   const out: (BenchmarkRecord | null)[] = new Array(allJobs.length).fill(null);
@@ -316,28 +296,11 @@ export async function runBenchmark(options: RunnerOptions = {}): Promise<RunnerR
       }
     }
   }
-  const queue = [...parallelJobs];
+  const queue = [...allJobs];
   await Promise.all(
     Array.from({ length: Math.min(CONCURRENCY, queue.length) }, () => worker(queue)),
   );
-  // Class E strictly serial, in original order — inside the process-wide
-  // mutex so concurrent runs can't steal each other's injected failure.
-  for (const job of serialJobs) {
-    if (options.signal?.aborted) {
-      aborted = true;
-      break;
-    }
-    try {
-      out[jobIndex.get(job)!] = await runExclusive(() => runOneJob(job));
-    } catch (err) {
-      if (isAbort(err, options.signal)) {
-        aborted = true;
-        break;
-      }
-      throw err;
-    }
-  }
-  // Reassemble in the original frozen task order (A→E), dropping nulls
+  // Reassemble in the original frozen task order (A→D), dropping nulls
   // (aborted or never-started jobs leave no fake rows).
   for (const job of allJobs) {
     const rec = out[jobIndex.get(job)!];

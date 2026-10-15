@@ -17,7 +17,7 @@ export type BenchmarkSystem =
   | "CLAUDE"
   | "OPENAI";
 
-export type WorkloadClass = "A" | "B" | "C" | "D" | "E";
+export type WorkloadClass = "A" | "B" | "C" | "D";
 export type Difficulty = "EASY" | "MEDIUM" | "HARD";
 export type VerificationStatus = "PASS" | "FAIL" | "INSUFFICIENT" | "SKIPPED";
 export type RunMode = "ADAPTIVE" | "STATIC";
@@ -147,7 +147,7 @@ export interface BenchmarkRunManifest {
   models: Partial<Record<BenchmarkSystem, string | null>>;
 }
 
-export const TASK_VERSION = "workload-classes-v3";
+export const TASK_VERSION = "workload-classes-v4";
 
 /**
  * Honest reproducibility statement (onboarding acceptance #6), shared by the

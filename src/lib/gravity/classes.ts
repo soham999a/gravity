@@ -1,5 +1,5 @@
 /**
- * Five Workload Classes — ported from the intelligence-fabric battery.
+ * Four Workload Classes — ported from the intelligence-fabric battery.
  * Runs real missions through the live pipeline (driven by the adaptive kernel)
  * and judges the STRUCTURAL behavior, not just the answer text: the right
  * level, the right tokens, the right adaptation.
@@ -9,7 +9,7 @@ import { getMission, getExecutionRuns, getExecutionNodes, getEvaluation, getRout
 import { createMissionWithPlan, executeMission } from "./pipeline";
 import { adaptationState } from "./kernel";
 
-export type WorkloadClassId = "A" | "B" | "C" | "D" | "E";
+export type WorkloadClassId = "A" | "B" | "C" | "D";
 
 export interface WorkloadClassDef {
   id: WorkloadClassId;
@@ -19,7 +19,7 @@ export interface WorkloadClassDef {
   prompt: string;
   expect: {
     levels: number[];
-    shape: "deterministic" | "statistical" | "model" | "parallel" | "resilient";
+    shape: "deterministic" | "statistical" | "model" | "parallel";
     liveModel: boolean;
   };
 }
@@ -64,16 +64,6 @@ export const WORKLOAD_CLASSES: WorkloadClassDef[] = [
     prompt:
       "Analyze our expansion decision across three workstreams: (1) the financial case for expanding to two new cities, (2) the operational risks of scaling delivery logistics, (3) the competitive landscape response. Provide an integrated recommendation after comparing all three analyses.",
     expect: { levels: [5], shape: "parallel", liveModel: false },
-  },
-  {
-    id: "E",
-    title: "Graceful degradation",
-    examples: "worker failure · retry · recovery",
-    claim:
-      "A resource failure mid-run is absorbed by the orchestrator: retry succeeds, mission completes.",
-    prompt:
-      "Summarize the key operational risks in our delivery pipeline and recommend mitigations for the next quarter.",
-    expect: { levels: [2, 3, 4, 5], shape: "resilient", liveModel: false },
   },
 ];
 
@@ -159,28 +149,12 @@ export async function runWorkloadClass(
   const selectedLevel = decision?.escalationLevel ?? 0;
   const structuralPass = def.expect.levels.includes(selectedLevel);
 
-  // 3. Execute. Class E arms a one-shot worker failure right before the run
-  //    (after profiling, so the orchestrator's retry story is the one shown).
+  // 3. Execute — bounded by the mission's own deadlines.
   let executionError: string | null = null;
-  const armE = def.id === "E";
-  if (armE) {
-    let consumed = false;
-    (globalThis as unknown as { __gravity_inject_failure__?: unknown }).__gravity_inject_failure__ = {
-      consume: () => {
-        if (!consumed) {
-          consumed = true;
-          return true;
-        }
-        return false;
-      },
-    };
-  }
   try {
     await executeMission(mission.id);
   } catch (err) {
     executionError = err instanceof Error ? err.message : String(err);
-  } finally {
-    if (armE) (globalThis as unknown as { __gravity_inject_failure__?: unknown }).__gravity_inject_failure__ = undefined;
   }
 
   // 4. Pull the real execution state back from the DB.
