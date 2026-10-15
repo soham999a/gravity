@@ -7,7 +7,6 @@ import { ArrowUpRight } from "lucide-react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { AuthModal } from "@/components/auth/AuthModal";
-import { GravityWell } from "@/components/gravity/GravityWell";
 
 const PILLARS = [
   {
@@ -32,6 +31,7 @@ const PILLARS = [
  *  Logged-out visitors meet sign-in first, then land straight in /studio. */
 export default function LandingPage() {
   const router = useRouter();
+  const sphereRef = React.useRef<HTMLVideoElement | null>(null);
   const [isAuthed, setIsAuthed] = React.useState(
     () => typeof document !== "undefined" && document.cookie.includes("fb-token="),
   );
@@ -42,14 +42,34 @@ export default function LandingPage() {
     return () => unsub();
   }, []);
 
+  // Reduced-motion: freeze sphere on first frame instead of looping.
+  React.useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      sphereRef.current?.pause();
+    }
+  }, []);
+
   const explore = () => {
     if (isAuthed) router.push("/studio");
     else setAuthOpen(true);
   };
   return (
     <div className="ds">
-      {/* Spacetime bent around a decision — landing only. */}
-      <GravityWell />
+      {/* Floating sphere as the WHOLE page background — fixed, full-bleed. */}
+      <div className="ds-bg" aria-hidden="true">
+        <video
+          ref={sphereRef}
+          className="ds-bg-video"
+          src="/floating_sphere_20s.mp4"
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="auto"
+          disablePictureInPicture
+        />
+        <div className="ds-bg-shade" />
+      </div>
       <section className="ds-hero">
         <h1 className="ds-h1">
           Explore unreached <em>intelligence.</em>

@@ -6211,6 +6211,48 @@
   text-align: center;
   padding: clamp(72px, 12vh, 140px) 0 clamp(48px, 7vh, 84px);
 }
+/* Floating sphere as the WHOLE landing background — fixed, full-bleed.
+   Source is a light 16:9 clip; inverted so it melts into the dark void.
+   object-fit: cover keeps exact orientation, never squished.
+   Type/layout below untouched. */
+.ds-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  overflow: hidden;
+  background: #000;
+}
+.ds-bg-video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  object-position: center;
+  /* light source → dark surface, geometry untouched */
+  filter: invert(1) brightness(0.72) contrast(1.06);
+}
+.ds-bg-shade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to bottom, rgba(8, 8, 8, 0.62), rgba(8, 8, 8, 0.18) 30%, rgba(8, 8, 8, 0.22) 62%, rgba(8, 8, 8, 0.88)),
+    radial-gradient(ellipse 70% 55% at 50% 42%, transparent 40%, rgba(8, 8, 8, 0.55) 100%);
+}
+/* Text floats above video — soft shadow so ivory type stays readable. */
+.ds-hero,
+.ds-pillars,
+.ds-foot {
+  position: relative;
+  z-index: 1;
+}
+.ds-h1,
+.ds-sub {
+  text-shadow: 0 2px 32px rgba(0, 0, 0, 0.9), 0 1px 8px rgba(0, 0, 0, 0.8);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ds-bg-shade { display: none; }
+}
 .ds-pill {
   display: inline-flex;
   align-items: center;
