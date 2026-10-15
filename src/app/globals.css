@@ -5593,8 +5593,8 @@
    ============================================================ */
 .bench-sticky {
   position: sticky;
-  top: 0;
-  z-index: 30;
+  top: 72px;
+  z-index: 20;
   padding: 12px 0;
   background: color-mix(in srgb, var(--color-void) 88%, transparent);
   backdrop-filter: blur(8px);
@@ -5720,7 +5720,7 @@
   background: rgba(184, 150, 12, 0.04);
 }
 .bench-lab .bench-table thead th {
-  top: 73px;
+  top: 0;
   border-bottom: 1px solid rgba(184, 150, 12, 0.35);
 }
 .bench-lab .bench-empty {
