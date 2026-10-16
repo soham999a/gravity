@@ -6520,7 +6520,7 @@
   align-items: flex-start;
   text-align: left;
   min-height: calc(100svh - 72px);
-  background: #f2efe8;
+  background: #fff;
   color: #141210;
   padding: clamp(56px, 8vh, 96px) clamp(24px, 7vw, 120px) 28px;
 }
