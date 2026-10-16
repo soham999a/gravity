@@ -36,14 +36,8 @@ export default function LandingPage() {
           <GravityField />
         </div>
 
-        <span className="gv-hero-index" aria-hidden="true">
-          G / 001
-        </span>
-
         <div className="gv-hero-inner">
-          <p className="gv-kicker">
-            <span className="gv-kicker-plus">+</span> ADAPTIVE INTELLIGENCE FABRIC
-          </p>
+          <p className="gv-kicker">ADAPTIVE INTELLIGENCE FABRIC</p>
           <h1 className="gv-h1">
             Explore unreached
             <br />
@@ -72,7 +66,6 @@ export default function LandingPage() {
             </span>
             INTELLIGENCE, BY DESIGN
           </span>
-          <span className="gv-hero-fig">FIG. 01&nbsp;&nbsp;THE GRAVITY FIELD&nbsp;&nbsp;+</span>
         </div>
       </section>
 
@@ -87,9 +80,6 @@ export default function LandingPage() {
             <br />
             <span>Make the right one.</span>
           </h2>
-          <p className="gv-dark-count" aria-hidden="true">
-            01 — 03
-          </p>
         </div>
 
         <div className="gv-cols">
